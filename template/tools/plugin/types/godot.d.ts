@@ -11,10 +11,19 @@ export class Node extends Object {
   is_connected(signal: string, callable: Callable): boolean;
 }
 
-export class CanvasItem extends Node {}
-export class Node2D extends CanvasItem {}
-export class Node3D extends Node {}
-export class Control extends CanvasItem {}
+export class CanvasItem extends Node {
+  modulate: Color;
+}
+export class Node2D extends CanvasItem {
+  position: Vector2;
+  get_position(): Vector2;
+}
+export class Node3D extends Node {
+  position: Vector3;
+}
+export class Control extends CanvasItem {
+  size: Vector2;
+}
 export class Label extends Control {}
 export class Sprite2D extends Node2D {}
 
@@ -33,6 +42,7 @@ export class Signal<T extends (...args: never[]) => void = (...args: never[]) =>
   disconnect(fn: T | Callable): void;
   is_connected(fn: T | Callable): boolean;
   emit(...args: Parameters<T>): void;
+  as_promise(): Promise<unknown[]>;
 }
 
 export class Timer extends Node {
@@ -58,11 +68,20 @@ export const IntegerType: unique symbol;
 export const FloatType: unique symbol;
 
 export class Vector2 {
+  x: number;
+  y: number;
   constructor(x?: number, y?: number);
 }
 export class Vector3 {
+  x: number;
+  y: number;
+  z: number;
   constructor(x?: number, y?: number, z?: number);
 }
 export class Color {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
   constructor(r?: number, g?: number, b?: number, a?: number);
 }

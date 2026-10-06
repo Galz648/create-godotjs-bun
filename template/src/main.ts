@@ -1,6 +1,7 @@
 import "../polyfills/web-globals.js"; // TextEncoder, AbortController, fast setImmediate, Error.stack header (must be first)
 import { Node, ResourceLoader, type Script } from "godot";
 import { Context, Effect, Layer, Schedule, Schema } from "effect";
+import { devState } from "./lib/dev-state";
 import { gd } from "./lib/gd";
 import { sharedTag } from "./lib/shared";
 
@@ -29,8 +30,11 @@ function load(path: string): Script {
   return ResourceLoader.load(path) as Script;
 }
 
-@gd.class // registers the class with Godot so exports and signals work
+// No @gd.class needed: a default-exported class with @gd member decorators is registered by the build plugin.
 export default class GameRoot extends Node {
+  // Survives `bun run dev` relaunches (see src/lib/dev-state.ts). Edit a file and watch the count continue.
+  private ticks = 0;
+
   // 100 has no decimal point, so the build plugin stores an int. The scene overrides it to 42.
   @gd.export()
   accessor health: number = 100;
@@ -50,6 +54,8 @@ export default class GameRoot extends Node {
     // `call("new")` constructs once on the stock engine and on a patched engine.
     const spinner = load("res://src/scripts/Spinner.ts").call("new") as Node;
     this.add_child(spinner);
+    devState("demo", { save: () => ({ ticks: this.ticks }), load: (s) => { this.ticks = s.ticks; } });
+    setInterval(() => console.log(`demo ticks=${++this.ticks}`), 1000);
     Effect.runPromise(program)
       .then((r) => console.log(`program finished: ${r}`))
       .catch((e) => console.log(`program failed: ${e}`));

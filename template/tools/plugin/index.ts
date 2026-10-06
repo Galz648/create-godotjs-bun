@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
 import { composeMappings, type TransformMap } from "./sourcemap.ts";
+import { SceneIndex } from "./scenes.ts";
 import { transformSourceFile } from "./transform.ts";
 
 const PLUGIN_DIR = import.meta.dir;
@@ -11,7 +12,7 @@ const GODOT_DTS = join(PLUGIN_DIR, "types/godot.d.ts");
 const ANNOT_DTS = join(PLUGIN_DIR, "types/godot.annotations.d.ts");
 
 const NEEDS =
-  /export\s*\.\s*array\s*\(|export\s*\.\s*object\s*\(|\.onready\s*\(|\.connect\s*\(|\.disconnect\s*\(|\.is_connected\s*\(|tween_callback\s*\(|\.set_script\s*\(|\bgd\s*\.\s*export\s*\(|Callable\s*\.\s*create\s*\(|\.filter\s*\(|\.map\s*\(/;
+  /export\s*\.\s*array\s*\(|export\s*\.\s*object\s*\(|\.onready\s*\(|\.connect\s*\(|\.disconnect\s*\(|\.is_connected\s*\(|tween_callback\s*\(|\.set_script\s*\(|\bgd\s*\.\s*(?:class|export|onready|signal)\b|\bSignal\s*<|Callable\s*\.\s*create\s*\(|\.filter\s*\(|\.map\s*\(/;
 
 const CALLABLE_HELPER = `import { Callable } from "godot";
 
@@ -46,7 +47,19 @@ export function createSession(root: string): Session {
   const projectRoot = realpathSync(root);
   const maps = new Map<string, TransformMap>();
   const program = createProgram(projectRoot);
+  // The runtime half. A project's own src/lib/gd.ts wins; a test project without one uses the starter's.
+  const ownGd = join(projectRoot, "src/lib/gd.ts");
+  const gdModule = existsSync(ownGd) ? ownGd : join(PLUGIN_DIR, "../../src/lib/gd.ts");
   const checker = program.getTypeChecker();
+  // Scene knowledge for @onready path/type warnings. Read on first use only (so a build with no @onready,
+  // or no scenes, pays nothing), and once per build: a session is one build.
+  let scenes: SceneIndex | undefined;
+  const sceneIndex = {
+    checkOnready(scriptFile: string, path: string, fieldType: string | null): string[] {
+      scenes ??= SceneIndex.fromProject(projectRoot);
+      return scenes.checkOnready(scriptFile, path, fieldType);
+    },
+  };
 
   const plugin: Bun.BunPlugin = {
     name: "godotjs-tooling",
@@ -76,7 +89,7 @@ export function createSession(root: string): Session {
         if (!NEEDS.test(text)) return;
         const sourceFile = program.getSourceFile(file);
         if (!sourceFile) return;
-        const result = transformSourceFile(sourceFile, checker);
+        const result = transformSourceFile(sourceFile, checker, { gdModule, scenes: sceneIndex });
         if (!result) return;
         for (const warning of result.warnings) console.warn(`[tooling] ${warning}`);
         if (result.map.generatedText === result.map.originalText) return;

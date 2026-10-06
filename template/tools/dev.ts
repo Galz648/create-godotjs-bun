@@ -1,7 +1,9 @@
 // Rebuild on save and relaunch the game. `bun run dev:build` stays watch-only.
 // GODOT_ARGS is split on spaces and appended after `--path .` (tests pass `--headless`).
+// State survives a relaunch: before killing the game the runner asks it to save (src/lib/dev-state.ts),
+// the next process restores it. `--fresh` (or GODOTJS_DEV_FRESH=1) turns that off. docs/design/dev-state.md.
 import { execFileSync } from "node:child_process";
-import { existsSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { build } from "./build.ts";
@@ -11,6 +13,14 @@ const ROOT = join(import.meta.dir, "..");
 
 const DEBOUNCE_MS = 150;
 const KILL_GRACE_MS = 2000;
+const SAVE_ACK_MS = Number(process.env.GODOTJS_DEV_SAVE_ACK_MS) || 1500;
+const SAVE_POLL_MS = 25;
+
+const fresh = process.argv.includes("--fresh") || ["1", "true"].includes(process.env.GODOTJS_DEV_FRESH ?? "");
+const STATE_DIR = join(ROOT, ".godot", "dev-state"); // owned by this runner: request, state.json
+const STATE_FILE = join(STATE_DIR, "state.json");
+const REQUEST_FILE = join(STATE_DIR, "request");
+let saveCount = 0;
 
 const godot = requireGodot();
 const extraArgs = (process.env.GODOT_ARGS ?? "").split(" ").filter((arg) => arg.length > 0);
@@ -62,15 +72,48 @@ async function stopGame(proc: Subprocess): Promise<void> {
   }
 }
 
+function clearState(): void {
+  rmSync(STATE_FILE, { force: true });
+  rmSync(REQUEST_FILE, { force: true });
+}
+
+/** Ask the running game to save; true once it answered with this request's token. A hung game just times out. */
+async function requestSave(proc: Subprocess): Promise<boolean> {
+  const token = `${process.pid}-${++saveCount}-${Date.now()}`;
+  writeFileSync(REQUEST_FILE, token);
+  const deadline = Date.now() + SAVE_ACK_MS;
+  while (Date.now() < deadline && alive(proc)) {
+    try {
+      if ((JSON.parse(readFileSync(STATE_FILE, "utf8")) as { token?: string }).token === token) return true;
+    } catch { /* not written yet, or half written: ask again in a moment */ }
+    await Bun.sleep(SAVE_POLL_MS);
+  }
+  return false;
+}
+
 async function restartGame(): Promise<void> {
   if (stopping) return;
   const prev = game;
   game = null;
+  if (!fresh) {
+    mkdirSync(STATE_DIR, { recursive: true });
+    if (prev && alive(prev)) {
+      if (await requestSave(prev)) console.log("dev-state: saved, relaunching");
+      else {
+        console.log(`dev-state: no save acknowledgement within ${SAVE_ACK_MS} ms; relaunching fresh`);
+        clearState();
+      }
+    } else {
+      clearState(); // no running game to ask (it crashed or was closed): never restore an older state
+    }
+    rmSync(REQUEST_FILE, { force: true });
+  }
   if (prev) await stopGame(prev);
   if (stopping) return;
   const proc = Bun.spawn({
     cmd: [godot, "--path", ".", ...extraArgs],
     cwd: ROOT,
+    env: fresh ? process.env : { ...process.env, GODOTJS_DEV_STATE: STATE_DIR },
     stdin: "ignore",
     stdout: "inherit",
     stderr: "inherit",
@@ -148,6 +191,8 @@ process.on("exit", () => {
   try { proc.kill("SIGKILL"); } catch { /* already gone */ }
 });
 
+if (fresh) console.log("dev-state: off (--fresh)");
+else clearState(); // a clean start never restores what an earlier runner left behind
 await requestBuild();
 console.log("watching src/ ...");
 for (const dir of ["src", "gen"]) {

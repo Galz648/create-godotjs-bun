@@ -13,6 +13,7 @@
     "headless:mapped": "bun tools/godot.ts --headless --quit-after 300 --path . 2>&1 | bun tools/unmap.ts",
     "editor": "bun tools/godot.ts --editor --path .",
     "typecheck": "tsc --noEmit",
+    "export:macos": "bun tools/export.ts",
     "config": "bun tools/config.ts"
   },
   "dependencies": {

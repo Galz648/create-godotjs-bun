@@ -1,0 +1,36 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Godot: watch build",
+      "type": "shell",
+      "command": "bun run dev:build",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Godot: open editor",
+      "type": "shell",
+      "command": "bun run editor",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Godot: run game (rebuild + relaunch on save)",
+      "type": "shell",
+      "command": "bun run dev",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Typecheck",
+      "type": "shell",
+      "command": "bun run typecheck",
+      "problemMatcher": "$tsc",
+      "group": "build"
+    }
+  ]
+}

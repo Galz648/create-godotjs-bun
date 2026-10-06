@@ -1,0 +1,9 @@
+{
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "js/ts.experimental.useTsgo": false,
+  "files.watcherExclude": { "**/.godot/**": true },
+  "search.exclude": { "**/.godot": true, "typings/*.gen.d.ts": true, "typings/jsb.*.d.ts": true },
+  "editor.formatOnSave": false
+}

@@ -95,6 +95,11 @@ if (noEffect) {
 const projectPath = join(target, "project.godot");
 const quoted = `"${projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 writeFileSync(projectPath, readFileSync(projectPath, "utf8").replace(/^config\/name=.*$/m, () => `config/name=${quoted}`));
+const presetPath = join(target, "export_presets.cfg");
+if (existsSync(presetPath)) {
+  const slug = projectName.toLowerCase().replace(/[^a-z0-9]+/g, "") || "game";
+  writeFileSync(presetPath, readFileSync(presetPath, "utf8").replace(/^application\/bundle_identifier=.*$/m, () => `application/bundle_identifier="com.example.${slug}"`));
+}
 const pkgPath = join(target, "package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
 pkg.name = projectName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|-+$/g, "") || "godotjs-game";

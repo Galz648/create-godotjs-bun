@@ -62,13 +62,25 @@ const godot = requireGodot();
 const result = spawnSync(
   godot,
   ["--headless", "--editor", "--generate-types", "--quit-after", "3000", "--path", "."],
-  { cwd: root, stdio: "inherit" },
+  { cwd: root, encoding: "utf8", maxBuffer: 512 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] },
 );
+process.stdout.write(result.stdout ?? "");
+process.stderr.write(result.stderr ?? "");
 if (result.error) {
   console.error(result.error.message);
   process.exit(1);
 }
-if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
+if ((result.status ?? 1) !== 0) {
+  // Patched engine builds can abort in a strict teardown check (JSB_STRICT_DISPOSE) AFTER generation finished.
+  const finished = /Type generation complete/.test(`${result.stdout ?? ""}${result.stderr ?? ""}`);
+  if (finished && existsSync(join(root, "typings", "godot0.gen.d.ts"))) {
+    console.warn(
+      `warning: the engine exited with status ${result.status} after "Type generation complete" (a known shutdown assertion in patched builds); the typings were written, continuing.`,
+    );
+  } else {
+    process.exit(result.status ?? 1);
+  }
+}
 
 parkShim();
 ensureGdignore();
