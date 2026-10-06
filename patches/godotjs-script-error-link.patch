@@ -1,0 +1,141 @@
+--- a/bridge/jsb_bridge_helper.h
++++ b/bridge/jsb_bridge_helper.h
+@@ -51,6 +51,10 @@
+         // Get stacktrace info from exception
+         static String get_stacktrace(const impl::TryCatch& p_catch, internal::SourcePosition& r_position);
+ 
++        // First stack frame in p_text that maps to a res:// *.ts path (native and bundle frames skipped).
++        // r_line is 1-based, matching the printed frame. Returns false when no such frame exists.
++        static bool find_mapped_ts_frame(const String& p_text, String& r_path, int& r_line, String& r_func);
++
+         template<typename T>
+         struct TVariantArray
+         {
+--- a/bridge/jsb_bridge_helper.cpp
++++ b/bridge/jsb_bridge_helper.cpp
+@@ -82,4 +82,83 @@
+         stacktrace = Environment::wrap(p_catch.get_isolate())->get_source_map_cache().process_source_position(stacktrace, &r_position);
+         return stacktrace;
+     }
++
++    bool BridgeHelper::find_mapped_ts_frame(const String& p_text, String& r_path, int& r_line, String& r_func)
++    {
++        const Vector<String> lines = p_text.split("\n");
++        for (int li = 0; li < lines.size(); ++li)
++        {
++            const String& line = lines[li];
++            int search = 0;
++            while (search < line.length())
++            {
++                const int res = line.find("res://", search);
++                if (res < 0) break;
++                const int ts = line.find(".ts:", res);
++                if (ts < 0) break;
++
++                bool bad = false;
++                for (int i = res; i < ts; ++i)
++                {
++                    const char32_t c = line[i];
++                    if (c == ' ' || c == '\t' || c == '(' || c == ')')
++                    {
++                        bad = true;
++                        break;
++                    }
++                }
++                if (bad)
++                {
++                    search = res + 6;
++                    continue;
++                }
++
++                // Stack frames are "at func (res://...)" or "at res://...". A path inside the message is not a frame.
++                const int at_pos = line.rfind("at ", res);
++                if (at_pos < 0)
++                {
++                    search = ts + 4;
++                    continue;
++                }
++
++                int num = ts + 4;
++                int line_no = 0;
++                bool any = false;
++                while (num < line.length())
++                {
++                    const char32_t c = line[num];
++                    if (c < '0' || c > '9') break;
++                    any = true;
++                    line_no = line_no * 10 + (int)(c - '0');
++                    if (line_no > 10000000)
++                    {
++                        any = false;
++                        break;
++                    }
++                    ++num;
++                }
++                if (!any || line_no <= 0)
++                {
++                    search = ts + 4;
++                    continue;
++                }
++
++                r_path = line.substr(res, ts + 3 - res);
++                r_line = line_no;
++                r_func = String();
++                if (res > 0 && line[res - 1] == '(')
++                {
++                    int func_end = res - 1;
++                    while (func_end > at_pos + 3 && line[func_end - 1] == ' ') func_end--;
++                    const int func_start = at_pos + 3;
++                    if (func_end > func_start)
++                    {
++                        r_func = line.substr(func_start, func_end - func_start);
++                    }
++                }
++                return true;
++            }
++        }
++        return false;
++    }
+ }
+--- a/bridge/jsb_environment.cpp
++++ b/bridge/jsb_environment.cpp
+@@ -28,6 +28,7 @@
+ #endif
+ #endif
+ #include "main/performance.h"
++#include "core/error/error_macros.h"
+ #include "core/io/resource_loader.h"
+ #include "core/os/thread_safe.h"
+ #include "scene/main/node.h"
+@@ -1753,7 +1754,30 @@
+         }
+         if (try_catch_run.has_caught())
+         {
+-            JSB_LOG(Error, "exception thrown in function:\n%s", BridgeHelper::get_exception(try_catch_run));
++            const String detail = BridgeHelper::get_exception(try_catch_run);
++            String script_path;
++            int script_line = 0;
++            String script_func;
++            // Godot links whatever file/line _err_print_error is given. The C++ macro
++            // makes Output and Debugger > Errors point at this function. A res:// *.ts
++            // frame is reported as a script error so the click goes through ScriptEditor.
++            if (BridgeHelper::find_mapped_ts_frame(detail, script_path, script_line, script_func))
++            {
++#if !JSB_GDEXTENSION
++                const String message = jsb_format("[jsb][Error] exception thrown in function:\n%s", detail);
++                jsb::internal::IConsoleOutput::internal_write(jsb::internal::ELogSeverity::Error, message);
++                const CharString func_utf8 = script_func.utf8();
++                const CharString path_utf8 = script_path.utf8();
++                const CharString message_utf8 = message.utf8();
++                _err_print_error(func_utf8.get_data(), path_utf8.get_data(), script_line, message_utf8.get_data(), "", true, ERR_HANDLER_SCRIPT);
++#else
++                JSB_LOG(Error, "exception thrown in function:\n%s", detail);
++#endif
++            }
++            else
++            {
++                JSB_LOG(Error, "exception thrown in function:\n%s", detail);
++            }
+             r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+             return {};
+         }

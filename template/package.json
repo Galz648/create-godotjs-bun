@@ -1,0 +1,26 @@
+{
+  "name": "godotjs-effect-starter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun tools/build.ts",
+    "dev": "bun tools/dev.ts",
+    "dev:build": "bun tools/build.ts --watch",
+    "start": "bun tools/godot.ts --path .",
+    "headless": "bun tools/godot.ts --headless --quit-after 300 --path .",
+    "types": "bun tools/types.ts",
+    "types:shim": "bun tools/types.ts --shim",
+    "headless:mapped": "bun tools/godot.ts --headless --quit-after 300 --path . 2>&1 | bun tools/unmap.ts",
+    "editor": "bun tools/godot.ts --editor --path .",
+    "typecheck": "tsc --noEmit",
+    "config": "bun tools/config.ts"
+  },
+  "dependencies": {
+    "effect": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "source-map-js": "^1.2.2",
+    "typescript": "^5.9.0"
+  }
+}

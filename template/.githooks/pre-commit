@@ -1,0 +1,3 @@
+#!/bin/sh
+# Type-check before every commit (enable with: git config core.hooksPath .githooks)
+bun run typecheck || { echo "pre-commit: typecheck failed, commit aborted"; exit 1; }

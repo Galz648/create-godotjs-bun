@@ -1,0 +1,184 @@
+diff --git a/internal/jsb_source_map.cpp b/internal/jsb_source_map.cpp
+index 9d52023..0ea75ac 100644
+--- a/internal/jsb_source_map.cpp
++++ b/internal/jsb_source_map.cpp
+@@ -19,7 +19,7 @@ namespace jsb::internal
+ 
+     // base64vlq decode
+     // adapted from https://www.murzwin.com/base64vlq.html
+-    void SourceMap::decode(int p_line, const char* p_token, const char* p_end, InternalPosition& r_pos, int& r_aline, int& r_acol)
++    void SourceMap::decode(int p_line, const char* p_token, const char* p_end, InternalPosition& r_pos, int& r_aline, int& r_acol, int& r_asource, int& r_agen_col)
+     {
+         if (p_end - p_token <= 1) return;
+         uint8_t shift = 0;
+@@ -42,10 +42,15 @@ namespace jsb::internal
+             r_pos[index++] = neg ? -value : value;
+             value = shift = 0;
+         }
+-        r_aline += r_pos.source_line;
+-        r_acol += r_pos.source_column;
++        // VLQ fields are deltas. Generated column resets each line (caller). Source index does not.
++        const uint8_t nfields = index;
++        if (nfields >= 1) r_agen_col += r_pos.result_column;
++        if (nfields >= 2) r_asource += r_pos.source_index;
++        if (nfields >= 3) r_aline += r_pos.source_line;
++        if (nfields >= 4) r_acol += r_pos.source_column;
++        const int name = nfields >= 5 ? r_pos._reserved : 0;
+         Vector<InternalPosition>& elements = (*this)[p_line].elements;
+-        elements.append({ r_pos.result_column, r_pos.source_index, r_aline, r_acol, r_pos._reserved });
++        elements.append({ r_agen_col, r_asource, r_aline, r_acol, name });
+     }
+ 
+     SourceMap::InternalLine& SourceMap::operator[](int p_line)
+@@ -67,6 +72,8 @@ namespace jsb::internal
+         size_t cursor = 0;
+         int accum_line = 0;
+         int accum_column = 0;
++        int accum_source = 0;
++        int accum_gen_col = 0;
+         InternalPosition sp;
+         while (cursor < p_len)
+         {
+@@ -74,15 +81,16 @@ namespace jsb::internal
+             switch (ch)
+             {
+             case ';':
+-                // new line
+-                decode(line, p_mappings + pos, p_mappings + cursor, sp, accum_line, accum_column);
++                // new line; generated column resets, source index does not
++                decode(line, p_mappings + pos, p_mappings + cursor, sp, accum_line, accum_column, accum_source, accum_gen_col);
+                 ++line;
++                accum_gen_col = 0;
+                 pos = ++cursor;
+                 break;
+             case ',':
+                 // new element
+                 jsb_check(pos < cursor);
+-                decode(line, p_mappings + pos, p_mappings + cursor, sp, accum_line, accum_column);
++                decode(line, p_mappings + pos, p_mappings + cursor, sp, accum_line, accum_column, accum_source, accum_gen_col);
+                 pos = ++cursor;
+                 break;
+             default: ++cursor; break;
+@@ -90,7 +98,7 @@ namespace jsb::internal
+         }
+         if (pos < cursor)
+         {
+-            decode(line, p_mappings + pos, p_mappings + cursor, sp, accum_line, accum_column);
++            decode(line, p_mappings + pos, p_mappings + cursor, sp, accum_line, accum_column, accum_source, accum_gen_col);
+         }
+         return true;
+     }
+@@ -138,7 +146,10 @@ namespace jsb::internal
+     {
+         const Variant json = JSON::parse_string(p_source_map);
+         const CharString mappings = ((String) json.get("mappings")).utf8();
+-        source_root_ = (String) json.get("sourceRoot");
++        // A missing sourceRoot is NIL. Variant::operator String() turns NIL into "<null>",
++        // and path_join of that prefix eats one "../" from sources[i].
++        const Variant root_v = json.get("sourceRoot");
++        source_root_ = root_v.get_type() == Variant::STRING ? (String) root_v : String();
+         Array sources = (Array) json.get("sources");
+         for (int i = 0, n = sources.size(); i < n; ++i)
+         {
+diff --git a/internal/jsb_source_map.h b/internal/jsb_source_map.h
+index 681185c..8b27593 100644
+--- a/internal/jsb_source_map.h
++++ b/internal/jsb_source_map.h
+@@ -61,7 +61,7 @@ namespace jsb::internal
+         const String& get_source(int index) const;
+ 
+     private:
+-        void decode(int p_line, const char* p_token, const char* p_end, InternalPosition& r_pos, int& r_aline, int& r_acol);
++        void decode(int p_line, const char* p_token, const char* p_end, InternalPosition& r_pos, int& r_aline, int& r_acol, int& r_asource, int& r_agen_col);
+         InternalLine& operator[](int p_line);
+     };
+ }
+diff --git a/internal/jsb_source_map_cache.cpp b/internal/jsb_source_map_cache.cpp
+index b6bd432..1bd45c9 100644
+--- a/internal/jsb_source_map_cache.cpp
++++ b/internal/jsb_source_map_cache.cpp
+@@ -9,10 +9,27 @@ namespace jsb::internal
+ #if JSB_WITH_SOURCEMAP
+     bool SourceMapCache::match(const String& p_line, MatchResult& r_result)
+     {
++        r_result.print_one_based = false;
+ #if JSB_WITH_QUICKJS
+-        if (source_map_match1_.is_null()) source_map_match1_ = RegEx::create_from_string(R"(\s+at\s(.+)\s\((.+\.js):(\d+)\))"); // e.g. at xxx (file.js:1)
+-        const Ref<RegEx>& regex = source_map_match1_;
+-        const Ref<RegExMatch> match = regex->search(p_line);
++        // quickjs-ng prints `at fn (file.js:LINE:COL)` (1-based line and column).
++        // classic quickjs prints `at fn (file.js:LINE)` with no column. Try the column form first.
++        if (source_map_match1_.is_null()) source_map_match1_ = RegEx::create_from_string(R"(\s+at\s(.+)\s\((.+\.js):(\d+):(\d+)\))"); // e.g. at xxx (file.js:1:2)
++        if (source_map_match2_.is_null()) source_map_match2_ = RegEx::create_from_string(R"(\s+at\s(.+)\s\((.+\.js):(\d+)\))"); // e.g. at xxx (file.js:1)
++        const Ref<RegExMatch> with_col = source_map_match1_->search(p_line);
++        if (with_col.is_valid())
++        {
++            r_result.function = with_col->get_string(1);
++            r_result.filename = with_col->get_string(2);
++            // SourceMap::find takes zero-based line and column.
++            const int line = (int) with_col->get_string(3).to_int() - 1;
++            const int col = (int) with_col->get_string(4).to_int() - 1;
++            r_result.line = line > 0 ? line : 0;
++            r_result.col = col > 0 ? col : 0;
++            r_result.print_one_based = true;
++            return true;
++        }
++
++        const Ref<RegExMatch> match = source_map_match2_->search(p_line);
+         if (!match.is_valid()) return false;
+ 
+         const int group_index = match->get_group_count() - 2;
+@@ -56,17 +73,33 @@ namespace jsb::internal
+             if (!map->find(result.line, result.col, position)) continue;
+             const String& source = map->get_source(position.index);
+             const String& source_root = map->get_source_root();
+-            const String original_path = PathUtil::to_platform_specific_path(PathUtil::combine("res://", source_root, source));
++            // sources[i] is relative to the .map file (source map spec), not to res://.
++            // quickjs-ng's frame names the bundle with an OS path, so map-dir + ../../../src/main.ts
++            // simplifies to /.../src/main.ts. localize_path turns that into res://src/main.ts.
++            // Joining the relative source onto res:// instead leaves res://../../ .
++            String source_ref = source_root.is_empty() ? source : source_root.path_join(source);
++            const bool source_absolute = source_ref.begins_with("res://") || source_ref.begins_with("user://") || source_ref.begins_with("/") || source_ref.contains("://");
++            if (!source_absolute)
++            {
++                source_ref = result.filename.get_base_dir().path_join(source_ref);
++            }
++            String original_path = source_ref.simplify_path();
++            if (!original_path.begins_with("res://") && !original_path.begins_with("user://") && !original_path.contains("://"))
++            {
++                original_path = ProjectSettings::get_singleton()->localize_path(original_path);
++            }
++            const int out_line = result.print_one_based ? position.line + 1 : position.line;
++            const int out_column = result.print_one_based ? position.column + 1 : position.column;
+ 
+-            if (result.function.is_empty()) st_line = jsb_format("    at %s:%d:%d", original_path, position.line, position.column);
+-            else st_line = jsb_format("    at %s (%s:%d:%d)", result.function, original_path, position.line, position.column);
++            if (result.function.is_empty()) st_line = jsb_format("    at %s:%d:%d", original_path, out_line, out_column);
++            else st_line = jsb_format("    at %s (%s:%d:%d)", result.function, original_path, out_line, out_column);
+ 
+             if (!is_position_set)
+             {
+                 is_position_set = true;
+                 r_position->filename = original_path;
+-                r_position->line = position.line;
+-                r_position->column = position.column;
++                r_position->line = out_line;
++                r_position->column = out_column;
+                 r_position->function = result.function;
+             }
+         }
+diff --git a/internal/jsb_source_map_cache.h b/internal/jsb_source_map_cache.h
+index d1e2ede..34f1fd2 100644
+--- a/internal/jsb_source_map_cache.h
++++ b/internal/jsb_source_map_cache.h
+@@ -26,6 +26,10 @@ namespace jsb::internal
+ 
+             // not available in quickjs.impl
+             int col = 0;
++
++            // quickjs-ng frames are 1-based. Lookup stays 0-based (SourceMap::find).
++            // Only that path adds 1 back when printing. Classic quickjs and V8 do not.
++            bool print_one_based = false;
+         };
+ 
+         SourceMap* find_source_map(const String& p_filename);

@@ -1,0 +1,598 @@
+diff --git a/bridge/jsb_environment.cpp b/bridge/jsb_environment.cpp
+index e121efa..602cf45 100644
+--- a/bridge/jsb_environment.cpp
++++ b/bridge/jsb_environment.cpp
+@@ -539,6 +539,25 @@ namespace jsb
+                 notify_microtasks_run();
+             }
+         }
++
++        // Zero-delay timers (setImmediate/setTimeout(0)) and the promise jobs they trigger would otherwise cost one timer jiffy (10ms)
++        // or one frame per hop, which makes Effect's scheduler very slow. Drain follow-ups within a small wall-clock budget instead.
++        {
++            static constexpr uint64_t kImmediateBudgetUsec = 4000;
++            const uint64_t start_usec = OS::get_singleton()->get_ticks_usec();
++            for (int guard = 0; guard < 100000; ++guard)
++            {
++                isolate_->PerformMicrotaskCheckpoint();
++                if (!timer_manager_.has_immediates()) break;
++                if (OS::get_singleton()->get_ticks_usec() - start_usec > kImmediateBudgetUsec) break;
++                if (timer_manager_.tick(0))
++                {
++                    v8::Isolate::Scope isolate_scope(isolate_);
++                    v8::HandleScope handle_scope(isolate_);
++                    timer_manager_.invoke_timers(isolate_);
++                }
++            }
++        }
+ #endif
+ 
+         // handle messages from workers
+diff --git a/bridge/jsb_module_resolver.cpp b/bridge/jsb_module_resolver.cpp
+index e0ecfdb..59a6e7d 100644
+--- a/bridge/jsb_module_resolver.cpp
++++ b/bridge/jsb_module_resolver.cpp
+@@ -1,5 +1,8 @@
+ #include "jsb_module_resolver.h"
+ #include "jsb_environment.h"
++#include "core/io/json.h"
++#include "modules/regex/regex.h"
++#include "core/io/file_access.h"
+ 
+ #include "../internal/jsb_path_util.h"
+ 
+@@ -19,6 +22,284 @@ namespace jsb
+         }
+     }
+ 
++
++#if JSB_WITH_QUICKJS
++    namespace
++    {
++        // Native ES module support (quickjs only).
++        // - ESM files (`.mjs`, or `.js` under a package.json with "type": "module") are compiled as real ES modules,
++        //   registered by canonical file path in the quickjs module registry (one instance per file, whoever imports it).
++        // - relative specifiers are resolved natively (implicit `.js`/`.mjs`/`index.*` extensions included).
++        // - everything else (bare specifiers, `godot`, CJS files) is loaded through GodotJS `require` and exposed as a synthetic
++        //   module (named exports = own keys + names imported by scanned sources, default = module.exports).
++        // - `require()` of an ESM file imports it through the same registry and returns the namespace object.
++        struct EsmState
++        {
++            JSValue require = JS_UNDEFINED;
++            struct Pending { JSValue exports; Vector<String> extra; };
++            std::unordered_map<JSModuleDef*, Pending> pending;
++            // names imported from each specifier by the sources scanned so far: some modules (e.g. `godot`) resolve names lazily and cannot be enumerated
++            HashMap<String, HashSet<String>> wanted;
++            HashSet<String> prescanned;
++        };
++
++        thread_local EsmState g_esm;
++
++        // returns the existing file for `p_path` (trying implicit extensions), or an empty string
++        String esm_probe(const String& p_path)
++        {
++            static const char* const suffixes[] = { "", "." JSB_JAVASCRIPT_EXT, "." JSB_MODULE_EXT, "/index." JSB_JAVASCRIPT_EXT, "/index." JSB_MODULE_EXT };
++            for (const char* suffix : suffixes)
++            {
++                const String candidate = p_path + suffix;
++                if (FileAccess::exists(candidate)) return candidate;
++            }
++            return String();
++        }
++
++        // `.mjs`, or `.js` under the nearest package.json with "type": "module"
++        bool is_esm_file(const String& p_path)
++        {
++            if (p_path.ends_with("." JSB_MODULE_EXT)) return true;
++            if (!p_path.ends_with("." JSB_JAVASCRIPT_EXT)) return false;
++            static thread_local HashMap<String, bool> cache;
++            String dir = p_path.get_base_dir();
++            Vector<String> visited;
++            bool result = false;
++            while (true)
++            {
++                if (const bool* hit = cache.getptr(dir)) { result = *hit; break; }
++                visited.push_back(dir);
++                const String pkg = dir.path_join("package.json");
++                if (FileAccess::exists(pkg))
++                {
++                    const Variant parsed = JSON::parse_string(FileAccess::get_file_as_string(pkg));
++                    if (parsed.get_type() == Variant::DICTIONARY)
++                    {
++                        result = String(Dictionary(parsed).get("type", "")) == "module";
++                    }
++                    break;
++                }
++                const String parent = dir.get_base_dir();
++                if (parent == dir || parent.is_empty() || dir.ends_with("://")) break;
++                dir = parent;
++            }
++            for (const String& d : visited) cache[d] = result;
++            return result;
++        }
++
++        // records the names imported from each specifier; returns the relative specifiers found in the source
++        Vector<String> esm_scan_imports(const String& p_source)
++        {
++            static thread_local Ref<RegEx> re_names = RegEx::create_from_string("(?:import|export)\\s*(?:[\\w$]+\\s*,\\s*)?\\{([^}]*)\\}\\s*from\\s*[\"']([^\"']+)[\"']");
++            static thread_local Ref<RegEx> re_rel = RegEx::create_from_string("(?:from|import)\\s*[\"'](\\.{1,2}/[^\"']+)[\"']");
++            for (const Ref<RegExMatch>& m : re_names->search_all(p_source))
++            {
++                const String spec = m->get_string(2);
++                for (String part : m->get_string(1).split(","))
++                {
++                    part = part.strip_edges();
++                    if (part.begins_with("type ")) continue;
++                    const String name = part.get_slicec(' ', 0).strip_edges();
++                    if (!name.is_empty()) g_esm.wanted[spec].insert(name);
++                }
++            }
++            Vector<String> rel;
++            for (const Ref<RegExMatch>& m : re_rel->search_all(p_source)) rel.push_back(m->get_string(1));
++            return rel;
++        }
++
++        // scan the relative import graph below `p_path` so lazily-resolved modules know every name any importer wants
++        void esm_prescan(const String& p_path)
++        {
++            if (g_esm.prescanned.has(p_path)) return;
++            g_esm.prescanned.insert(p_path);
++            const String source = FileAccess::get_file_as_string(p_path);
++            for (const String& spec : esm_scan_imports(source))
++            {
++                const String resolved = esm_probe(p_path.get_base_dir().path_join(spec).simplify_path());
++                if (!resolved.is_empty() && is_esm_file(resolved)) esm_prescan(resolved);
++            }
++        }
++
++        char* esm_normalize(JSContext* ctx, const char* p_base, const char* p_name, void*)
++        {
++            String name = String::utf8(p_name);
++            if (name.begins_with("./") || name.begins_with("../"))
++            {
++                name = String::utf8(p_base).get_base_dir().path_join(name).simplify_path();
++            }
++            if (name.begins_with("res://") || name.begins_with("user://") || name.begins_with("/"))
++            {
++                const String probed = esm_probe(name);
++                if (!probed.is_empty()) name = probed;
++            }
++            return js_strdup(ctx, name.utf8().get_data());
++        }
++
++        int esm_init_synthetic(JSContext* ctx, JSModuleDef* m)
++        {
++            const auto it = g_esm.pending.find(m);
++            if (it == g_esm.pending.end()) return -1;
++            const JSValue exports = it->second.exports;
++            for (const String& extra : it->second.extra)
++            {
++                JS_SetModuleExport(ctx, m, extra.utf8().get_data(), JS_GetPropertyStr(ctx, exports, extra.utf8().get_data()));
++            }
++
++            JSPropertyEnum* tab = nullptr;
++            uint32_t len = 0;
++            if (JS_IsObject(exports) && JS_GetOwnPropertyNames(ctx, &tab, &len, exports, JS_GPN_STRING_MASK) == 0)
++            {
++                for (uint32_t i = 0; i < len; ++i)
++                {
++                    const char* key = JS_AtomToCString(ctx, tab[i].atom);
++                    if (strcmp(key, "default") != 0)
++                    {
++                        JS_SetModuleExport(ctx, m, key, JS_GetProperty(ctx, exports, tab[i].atom));
++                    }
++                    JS_FreeCString(ctx, key);
++                }
++                JS_FreePropertyEnum(ctx, tab, len);
++            }
++
++            JSValue def = JS_DupValue(ctx, exports);
++            if (JS_IsObject(exports))
++            {
++                const JSValue es = JS_GetPropertyStr(ctx, exports, "__esModule");
++                const bool is_es = JS_ToBool(ctx, es) > 0;
++                JS_FreeValue(ctx, es);
++                if (is_es)
++                {
++                    const JSValue d = JS_GetPropertyStr(ctx, exports, "default");
++                    if (!JS_IsUndefined(d)) { JS_FreeValue(ctx, def); def = d; }
++                    else JS_FreeValue(ctx, d);
++                }
++            }
++            JS_SetModuleExport(ctx, m, "default", def);
++            JS_FreeValue(ctx, exports);
++            g_esm.pending.erase(it);
++            return 0;
++        }
++
++        JSModuleDef* esm_load(JSContext* ctx, const char* p_name, void*)
++        {
++            const String name = String::utf8(p_name);
++            if (const String file = esm_probe(name); !file.is_empty() && is_esm_file(file))
++            {
++                Vector<uint8_t> bytes = FileAccess::get_file_as_bytes(file);
++                const int len = bytes.size();
++                bytes.push_back(0);
++                esm_scan_imports(String::utf8((const char*) bytes.ptr(), len));
++                const CharString canonical = file.utf8();
++                const JSValue fn = JS_Eval(ctx, (const char*) bytes.ptr(), len, canonical.get_data(), JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
++                if (JS_IsException(fn)) return nullptr;
++                JSModuleDef* m = (JSModuleDef*) JS_VALUE_GET_PTR(fn);
++                JS_FreeValue(ctx, fn);
++                const JSValue meta = JS_GetImportMeta(ctx, m);
++                if (JS_IsObject(meta))
++                {
++                    JS_SetPropertyStr(ctx, meta, "url", JS_NewString(ctx, canonical.get_data()));
++                    JS_SetPropertyStr(ctx, meta, "main", JS_NewBool(ctx, false));
++                }
++                JS_FreeValue(ctx, meta);
++                return m;
++            }
++
++            if (JS_IsUndefined(g_esm.require))
++            {
++                JS_ThrowReferenceError(ctx, "ES module loader has no require function (module '%s')", p_name);
++                return nullptr;
++            }
++            JSValue arg = JS_NewString(ctx, p_name);
++            const JSValue exports = JS_Call(ctx, g_esm.require, JS_UNDEFINED, 1, &arg);
++            JS_FreeValue(ctx, arg);
++            if (JS_IsException(exports)) return nullptr;
++
++            JSModuleDef* m = JS_NewCModule(ctx, p_name, esm_init_synthetic);
++            if (!m) { JS_FreeValue(ctx, exports); return nullptr; }
++
++            JSPropertyEnum* tab = nullptr;
++            uint32_t len = 0;
++            if (JS_IsObject(exports) && JS_GetOwnPropertyNames(ctx, &tab, &len, exports, JS_GPN_STRING_MASK) == 0)
++            {
++                for (uint32_t i = 0; i < len; ++i)
++                {
++                    const char* key = JS_AtomToCString(ctx, tab[i].atom);
++                    if (strcmp(key, "default") != 0) JS_AddModuleExport(ctx, m, key);
++                    JS_FreeCString(ctx, key);
++                }
++                JS_FreePropertyEnum(ctx, tab, len);
++            }
++            JS_AddModuleExport(ctx, m, "default");
++            EsmState::Pending pending{ exports, {} };
++            if (const HashSet<String>* names = g_esm.wanted.getptr(name))
++            {
++                for (const String& n : *names)
++                {
++                    if (n == "default") continue;
++                    const CharString cs = n.utf8();
++                    const JSAtom atom = JS_NewAtom(ctx, cs.get_data());
++                    const bool own = JS_IsObject(exports) && JS_GetOwnProperty(ctx, nullptr, exports, atom) > 0;
++                    JS_FreeAtom(ctx, atom);
++                    if (own) continue;
++                    JS_AddModuleExport(ctx, m, cs.get_data());
++                    pending.extra.push_back(n);
++                }
++            }
++            g_esm.pending[m] = pending;
++            return m;
++        }
++
++        String json_quote(const String& p_str)
++        {
++            return JSON::stringify(p_str);
++        }
++    }
++
++    // import `p_asset_path` through the shared module registry; `exports` becomes the module namespace object
++    static bool load_as_esm(Environment* p_env, const String& p_asset_path, const internal::ISourceReader& p_reader, JavaScriptModule& p_module)
++    {
++        jsb_unused(p_reader);
++        v8::Isolate* isolate = p_env->get_isolate();
++        JSContext* ctx = isolate->ctx();
++        JSRuntime* rt = isolate->rt();
++
++        // refresh the require function used by synthetic modules (keeps relative-to-this-module bare resolution)
++        {
++            const JSValue fresh = JS_DupValue(ctx, (JSValue) p_env->_new_require_func(p_module.id));
++            if (!JS_IsUndefined(g_esm.require)) JS_FreeValue(ctx, g_esm.require);
++            g_esm.require = fresh;
++        }
++        JS_SetModuleLoaderFunc(rt, esm_normalize, esm_load, nullptr);
++        esm_prescan(p_asset_path);
++
++        const CharString script = ("import(" + json_quote(p_asset_path) + ")").utf8();
++        const JSValue promise = JS_Eval(ctx, script.get_data(), script.length(), "<esm-import>", JS_EVAL_TYPE_GLOBAL);
++        if (JS_IsException(promise)) return false;
++
++        JSContext* job_ctx;
++        while (JS_ExecutePendingJob(rt, &job_ctx) > 0) {}
++
++        bool ok = false;
++        switch (JS_PromiseState(ctx, promise))
++        {
++        case JS_PROMISE_REJECTED:
++            JS_Throw(ctx, JS_PromiseResult(ctx, promise));
++            break;
++        case JS_PROMISE_PENDING:
++            JS_ThrowTypeError(ctx, "top-level await did not settle in ES module %s", script.get_data());
++            break;
++        default:
++            p_module.exports.Reset(isolate, v8::Local<v8::Value>(v8::Data(isolate, isolate->push_steal(JS_PromiseResult(ctx, promise)))));
++            ok = true;
++            break;
++        }
++        JS_FreeValue(ctx, promise);
++        return ok;
++    }
++#endif
++
+     bool IModuleResolver::load_as_json(Environment* p_env, JavaScriptModule& p_module, const String& p_asset_path, const Vector<uint8_t>& p_bytes, size_t p_len)
+     {
+         v8::Isolate* isolate = p_env->get_isolate();
+@@ -556,6 +837,13 @@ namespace jsb
+             return load_as_json(p_env, p_module, p_asset_path, source, len);
+         }
+ 
++#if JSB_WITH_QUICKJS
++        if (is_esm_file(p_asset_path))
++        {
++            return load_as_esm(p_env, p_asset_path, p_reader, p_module);
++        }
++#endif
++
+ #if JSB_DEBUG
+         if (!internal::PathUtil::is_recognized_javascript_extension(p_asset_path))
+         {
+diff --git a/internal/jsb_timer_manager.h b/internal/jsb_timer_manager.h
+index a00f3d9..e192e63 100644
+--- a/internal/jsb_timer_manager.h
++++ b/internal/jsb_timer_manager.h
+@@ -135,6 +135,7 @@ namespace jsb::internal
+         SArray<TimerData, IndexSafe64> _used_timers;
+         WheelState _wheels[kWheelNum];
+         std::vector<IndexSafe64> _activated_timers;
++        std::vector<IndexSafe64> _immediate_timers;
+         std::vector<IndexSafe64> _moving_timers;
+ 
+         static void check_internal_state()
+@@ -191,7 +192,15 @@ namespace jsb::internal
+             timer.action = std::forward<TFunction>(p_fn);
+             timer.loop = p_is_loop;
+ 
+-            rearrange_timer(index, delay);
++            if (!p_is_loop && delay <= 1)
++            {
++                // zero-delay one-shot (setImmediate / setTimeout(0)): do not wait for the next wheel jiffy
++                _immediate_timers.emplace_back(index);
++            }
++            else
++            {
++                rearrange_timer(index, delay);
++            }
+             inout_handle = TimerHandle(index);
+         }
+ 
+@@ -221,6 +230,7 @@ namespace jsb::internal
+         {
+             check_internal_state();
+             _activated_timers.clear();
++            _immediate_timers.clear();
+             _moving_timers.clear();
+             for (WheelState& wheel : _wheels)
+             {
+@@ -236,8 +246,15 @@ namespace jsb::internal
+             _elapsed = 0;
+         }
+ 
++        jsb_force_inline bool has_immediates() const { return !_immediate_timers.empty(); }
++
+         bool tick(uint64_t p_ms)
+         {
++            if (!_immediate_timers.empty())
++            {
++                _activated_timers.insert(_activated_timers.end(), _immediate_timers.begin(), _immediate_timers.end());
++                _immediate_timers.clear();
++            }
+             _time_slice += p_ms;
+             while (_time_slice >= kJiffies)
+             {
+diff --git a/scripts/jsb.runtime/src/jsb.polyfill.ts b/scripts/jsb.runtime/src/jsb.polyfill.ts
+new file mode 100644
+index 0000000..09f07d8
+--- /dev/null
++++ b/scripts/jsb.runtime/src/jsb.polyfill.ts
+@@ -0,0 +1,190 @@
++// Web encoding globals missing in quickjs-ng; required by ES module packages such as effect.
++const g = globalThis as any;
++if (typeof g.TextEncoder === "undefined") {
++  g.TextEncoder = class TextEncoder {
++    get encoding() { return "utf-8"; }
++    encode(str: any = "") {
++      const out: number[] = [];
++      for (const ch of String(str)) {
++        const c = ch.codePointAt(0)!;
++        if (c < 0x80) out.push(c);
++        else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
++        else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
++        else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
++      }
++      return new Uint8Array(out);
++    }
++  };
++}
++if (typeof g.TextDecoder === "undefined") {
++  g.TextDecoder = class TextDecoder {
++    get encoding() { return "utf-8"; }
++    decode(buf: any = new Uint8Array(0)) {
++      const b = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
++      let s = "";
++      for (let i = 0; i < b.length; ) {
++        const c = b[i++];
++        let cp = c;
++        if (c >= 0xf0) cp = ((c & 7) << 18) | ((b[i++] & 63) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
++        else if (c >= 0xe0) cp = ((c & 15) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
++        else if (c >= 0xc0) cp = ((c & 31) << 6) | (b[i++] & 63);
++        s += String.fromCodePoint(cp);
++      }
++      return s;
++    }
++  };
++}
++
++// ---- EventTarget / Event / AbortSignal / AbortController (Effect.callback, interruption, timeouts) ----
++if (typeof g.Event === "undefined") {
++    g.Event = class Event {
++        type: string; defaultPrevented = false; target: any = null; currentTarget: any = null; cancelable: boolean;
++        constructor(type: string, init?: { cancelable?: boolean }) { this.type = String(type); this.cancelable = !!(init && init.cancelable); }
++        preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
++        stopPropagation() { }
++        stopImmediatePropagation() { (this as any)._stop = true; }
++    };
++}
++if (typeof g.EventTarget === "undefined") {
++    g.EventTarget = class EventTarget {
++        _listeners: Map<string, { cb: any; once: boolean }[]> = new Map();
++        addEventListener(type: string, cb: any, opts?: any) {
++            if (!cb) return;
++            const once = typeof opts === "object" && opts !== null && !!opts.once;
++            let list = this._listeners.get(type);
++            if (!list) { list = []; this._listeners.set(type, list); }
++            if (list.some((l) => l.cb === cb)) return;
++            list.push({ cb, once });
++            if (typeof opts === "object" && opts !== null && opts.signal) {
++                opts.signal.addEventListener("abort", () => this.removeEventListener(type, cb), { once: true });
++            }
++        }
++        removeEventListener(type: string, cb: any) {
++            const list = this._listeners.get(type);
++            if (!list) return;
++            const i = list.findIndex((l) => l.cb === cb);
++            if (i >= 0) list.splice(i, 1);
++        }
++        dispatchEvent(ev: any) {
++            ev.target = this; ev.currentTarget = this;
++            const handler = (this as any)["on" + ev.type];
++            if (typeof handler === "function") handler.call(this, ev);
++            for (const l of [...(this._listeners.get(ev.type) || [])]) {
++                if (l.once) this.removeEventListener(ev.type, l.cb);
++                if (typeof l.cb === "function") l.cb.call(this, ev); else if (l.cb && typeof l.cb.handleEvent === "function") l.cb.handleEvent(ev);
++                if (ev._stop) break;
++            }
++            return !ev.defaultPrevented;
++        }
++    };
++}
++if (typeof g.DOMException === "undefined") {
++    g.DOMException = class DOMException extends Error {
++        constructor(message?: string, name?: string) { super(message); this.name = name || "Error"; }
++    };
++}
++if (typeof g.AbortSignal === "undefined") {
++    const kCreate = Symbol("create");
++    class AbortSignal extends g.EventTarget {
++        aborted = false; reason: any = undefined; onabort: any = null;
++        constructor(key?: any) { super(); if (key !== kCreate) throw new TypeError("Illegal constructor"); }
++        throwIfAborted() { if (this.aborted) throw this.reason; }
++        _abort(reason?: any) {
++            if (this.aborted) return;
++            this.aborted = true;
++            this.reason = reason === undefined ? new g.DOMException("This operation was aborted", "AbortError") : reason;
++            this.dispatchEvent(new g.Event("abort"));
++        }
++        static abort(reason?: any) { const s = new AbortSignal(kCreate); s._abort(reason); return s; }
++        static timeout(ms: number) {
++            const s = new AbortSignal(kCreate);
++            setTimeout(() => s._abort(new g.DOMException("The operation timed out", "TimeoutError")), ms);
++            return s;
++        }
++        static any(signals: any[]) {
++            const s = new AbortSignal(kCreate);
++            for (const sig of signals) {
++                if (sig.aborted) { s._abort(sig.reason); break; }
++                sig.addEventListener("abort", () => s._abort(sig.reason), { once: true });
++            }
++            return s;
++        }
++    }
++    g.AbortSignal = AbortSignal;
++    g.AbortController = class AbortController {
++        signal: any = new (AbortSignal as any)(kCreate);
++        abort(reason?: any) { this.signal._abort(reason); }
++    };
++}
++
++// ---- fast setImmediate ----
++// The host timer wheel has ~10ms (or one frame) granularity, so each `setImmediate` hop (Effect's scheduler yields through it)
++// costs a frame. Run immediates through the microtask queue instead, and fall back to a real timer once a chain has been running
++// for ~4ms so Godot frames are never starved.
++if (!g.__jsbFastImmediate) {
++    g.__jsbFastImmediate = true;
++    const nativeSetTimeout = g.setTimeout;
++    const now = () => (typeof g.performance !== "undefined" && g.performance.now ? g.performance.now() : Date.now());
++    type Item = { fn: Function; args: any[]; cancelled: boolean };
++    let queue: Item[] = [];
++    let scheduled = false;
++    let chainStart = -1;
++    const flush = () => {
++        scheduled = false;
++        const batch = queue;
++        queue = [];
++        for (const it of batch) {
++            if (!it.cancelled) it.fn(...it.args);
++        }
++        if (queue.length === 0) chainStart = -1;
++    };
++    const schedule = () => {
++        if (scheduled) return;
++        scheduled = true;
++        const t = now();
++        if (chainStart < 0) chainStart = t;
++        if (t - chainStart > 4) {
++            chainStart = -1;
++            nativeSetTimeout(flush, 0);
++        } else {
++            Promise.resolve().then(flush);
++        }
++    };
++    g.setImmediate = (fn: Function, ...args: any[]) => {
++        const item: Item = { fn, args, cancelled: false };
++        queue.push(item);
++        schedule();
++        return item;
++    };
++    g.clearImmediate = (item: any) => { if (item) item.cancelled = true; };
++}
++
++// ---- Error.stack header ----
++// quickjs-ng stacks contain only the "    at ..." frames; Node/V8 (and libraries that print `error.stack`) expect a leading "Name: message" line.
++// Wrap the global Error constructors so errors created from JS get the header. Errors raised by the engine itself are not covered.
++if (!g.__jsbStackHeader) {
++    g.__jsbStackHeader = true;
++    const fix = (e: any) => {
++        try {
++            const st = e.stack;
++            if (typeof st === "string" && !/^[A-Za-z_$][\w$]*(: |\n|$)/.test(st)) {
++                const head = e.message ? `${e.name}: ${e.message}` : String(e.name);
++                e.stack = head + "\n" + st;
++            }
++        } catch { /* leave as is */ }
++        return e;
++    };
++    for (const name of ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"]) {
++        const Orig = g[name];
++        if (typeof Orig !== "function" || Orig.__jsbWrapped) continue;
++        const Wrapped: any = function (this: any, ...args: any[]) {
++            return fix(Reflect.construct(Orig, args, new.target || Wrapped));
++        };
++        Wrapped.prototype = Orig.prototype;
++        Object.setPrototypeOf(Wrapped, Orig);
++        Orig.prototype.constructor = Wrapped;
++        Wrapped.__jsbWrapped = true;
++        g[name] = Wrapped;
++    }
++}
++export {};
+diff --git a/scripts/jsb.runtime/src/main.ts b/scripts/jsb.runtime/src/main.ts
+index 30fd911..8df48c7 100644
+--- a/scripts/jsb.runtime/src/main.ts
++++ b/scripts/jsb.runtime/src/main.ts
+@@ -1 +1,2 @@
++require("jsb.polyfill");
+ require("jsb.inject");

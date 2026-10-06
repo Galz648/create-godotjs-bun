@@ -1,0 +1,56 @@
+diff --git a/scripts/jsb.runtime/src/jsb.polyfill.ts b/scripts/jsb.runtime/src/jsb.polyfill.ts
+index 09f07d8..1a32579 100644
+--- a/scripts/jsb.runtime/src/jsb.polyfill.ts
++++ b/scripts/jsb.runtime/src/jsb.polyfill.ts
+@@ -169,7 +169,9 @@ if (!g.__jsbStackHeader) {
+             const st = e.stack;
+             if (typeof st === "string" && !/^[A-Za-z_$][\w$]*(: |\n|$)/.test(st)) {
+                 const head = e.message ? `${e.name}: ${e.message}` : String(e.name);
+-                e.stack = head + "\n" + st;
++                // drop the wrapper's own frames so the first frame is the caller
++                const body = st.split("\n").filter((l: string) => !/^\s*at (construct \(native\)|Wrapped \()/.test(l)).join("\n");
++                e.stack = head + "\n" + body;
+             }
+         } catch { /* leave as is */ }
+         return e;
+@@ -187,4 +189,32 @@ if (!g.__jsbStackHeader) {
+         g[name] = Wrapped;
+     }
+ }
++
++// ---- crypto (getRandomValues / randomUUID) ----
++// Uses Godot's Crypto when the engine exposes it, otherwise Math.random. NOT suitable for security-sensitive randomness unless Godot's Crypto is used.
++if (typeof g.crypto === "undefined") {
++    let godotRandomBytes: ((n: number) => Uint8Array) | null = null;
++    try {
++        const godot = (typeof require === "function") ? require("godot") : null;
++        if (godot && godot.Crypto) {
++            const c = new godot.Crypto();
++            godotRandomBytes = (n: number) => new Uint8Array(c.generate_random_bytes(n).to_array_buffer());
++        }
++    } catch { /* fall back to Math.random */ }
++    const fill = (arr: any) => {
++        const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
++        const src = godotRandomBytes ? godotRandomBytes(bytes.length) : null;
++        for (let i = 0; i < bytes.length; i++) bytes[i] = src ? src[i]! : Math.floor(Math.random() * 256);
++        return arr;
++    };
++    g.crypto = {
++        getRandomValues: fill,
++        randomUUID: () => {
++            const b = fill(new Uint8Array(16)) as Uint8Array;
++            b[6] = (b[6]! & 0x0f) | 0x40; b[8] = (b[8]! & 0x3f) | 0x80;
++            const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
++            return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
++        },
++    };
++}
+ export {};
+diff --git a/scripts/jsb.runtime/src/main.ts b/scripts/jsb.runtime/src/main.ts
+index 8df48c7..6cbccb1 100644
+--- a/scripts/jsb.runtime/src/main.ts
++++ b/scripts/jsb.runtime/src/main.ts
+@@ -1,2 +1,2 @@
+-require("jsb.polyfill");
+ require("jsb.inject");
++require("jsb.polyfill");

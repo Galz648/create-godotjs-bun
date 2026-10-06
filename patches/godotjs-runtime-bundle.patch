@@ -1,0 +1,2463 @@
+diff --git a/scripts/out/jsb.runtime.bundle.d.ts b/scripts/out/jsb.runtime.bundle.d.ts
+new file mode 100644
+index 0000000..aff5fc9
+--- /dev/null
++++ b/scripts/out/jsb.runtime.bundle.d.ts
+@@ -0,0 +1,212 @@
++declare module "godot.lib.api" {
++    import type * as Godot from "godot";
++    import type * as GodotJsb from "godot-jsb";
++    function proxy_unwrap_value<T>(value: T): T;
++    function proxy_wrap_value<T>(value: T): T;
++    function array_proxy<T extends any[]>(arr: T): T;
++    function object_proxy<T extends object>(obj: T, remap_properties?: boolean): T;
++    function key_only_proxy<T extends object | ((...args: any[]) => any)>(target: T): any;
++    function instance_proxy<T extends object>(target_instance: T): T;
++    function class_proxy<T extends object>(target_class: T): T;
++    function function_proxy<T extends (...args: any[]) => any>(fn: T): T;
++    function enum_proxy<T extends object>(target_enum: T): T;
++    const proxy: {
++        array_proxy: typeof array_proxy;
++        class_proxy: typeof class_proxy;
++        enum_proxy: typeof enum_proxy;
++        function_proxy: typeof function_proxy;
++        instance_proxy: typeof instance_proxy;
++        key_only_proxy: typeof key_only_proxy;
++        object_proxy: typeof object_proxy;
++        proxy_unwrap_value: typeof proxy_unwrap_value;
++        proxy_wrap_value: typeof proxy_wrap_value;
++    };
++    type GodotLibApi = typeof Godot & {
++        jsb: typeof GodotJsb;
++        proxy: typeof proxy;
++    };
++    const api: GodotLibApi;
++    /**
++     * This is a starting point for writing GodotJS code that is camel-case binding agnostic at runtime.
++     *
++     * Library code must consume this API rather than "godot", and be built with camel case bindings disabled. This is to
++     * ensure that the library will function at runtime for all projects irrespective of whether they have camel-case
++     * bindings enabled.
++     */
++    export = api;
++}
++declare module "godot.annotations" {
++    import type * as Godot from "godot";
++    import type { ClassBinder, RPCConfig } from "godot.annotations";
++    type VariantConstructor = abstract new (...args: any[]) => NonNullable<Godot.GAny> | Number | String | Boolean;
++    type GObjectConstructor = abstract new (...args: any[]) => Godot.Object;
++    type ClassSpecifier = VariantConstructor | Symbol | EnumPlaceholder | TypePairPlaceholder;
++    interface EnumPlaceholder {
++        target: Record<string, string | number>;
++    }
++    interface TypePairPlaceholder {
++        key: VariantConstructor;
++        value: VariantConstructor;
++    }
++    export function EnumType(type: Record<string, string | number>): EnumPlaceholder;
++    export function TypePair(key: VariantConstructor, value: VariantConstructor): TypePairPlaceholder;
++    /** @deprecated Use createClassBinder() instead. */
++    export function signal(): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportSignal: typeof signal;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_multiline(): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportMultiline: typeof export_multiline;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_range(min: number, max: number, step?: number, ...extra_hints: string[]): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportRange: typeof export_range;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_range_i(min: number, max: number, step?: number, ...extra_hints: string[]): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportIntRange: typeof export_range_i;
++    /** String as a path to a file, custom filter provided as hint. */
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_file(filter: string): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportFile: typeof export_file;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_dir(filter: string): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_global_file(filter: string): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportGlobalFile: typeof export_global_file;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_global_dir(filter: string): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportGlobalDir: typeof export_global_dir;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_exp_easing(hint?: "" | "attenuation" | "positive_only" | "attenuation,positive_only"): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportExpEasing: typeof export_exp_easing;
++    /**
++     * A Shortcut for `export_(Variant.Type.TYPE_ARRAY, { class_: clazz })`
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_array(clazz: ClassSpecifier): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportArray: typeof export_array;
++    /**
++     * A Shortcut for exporting a dictionary { class_: [key_class, value_class] })`
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_dictionary(key_class: VariantConstructor, value_class: VariantConstructor): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportDictionary: typeof export_dictionary;
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_object(clazz: GObjectConstructor): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportObject: typeof export_object;
++    /**
++     * [low level export]
++     * @deprecated Use createClassBinder() instead.
++     * */
++    export function export_(type: Godot.Variant.Type, details?: {
++        class_?: ClassSpecifier;
++        hint?: Godot.PropertyHint;
++        hint_string?: string;
++        usage?: Godot.PropertyUsageFlags;
++    }): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export function Export(type: Godot.Variant.Type, details?: {
++        class?: ClassSpecifier;
++        hint?: Godot.PropertyHint;
++        hintString?: string;
++        usage?: Godot.PropertyUsageFlags;
++    }): (target: any, name: string) => void;
++    /**
++     * In Godot, class members can be exported.
++     * This means their value gets saved along with the resource (such as the scene) they're attached to.
++     * They will also be available for editing in the property editor.
++     * Exporting is done by using the `@export_var` (or `@export_`) annotation.
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_var(type: Godot.Variant.Type, details?: {
++        class_?: ClassSpecifier;
++        hint?: Godot.PropertyHint;
++        hint_string?: string;
++        usage?: Godot.PropertyUsageFlags;
++    }): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportVar: typeof export_var;
++    /**
++     * NOTE only int value enums are allowed
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_enum(enum_type: Record<string, string | number>): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportEnum: typeof export_enum;
++    /**
++     * NOTE only int value enums are allowed
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    export function export_flags(enum_type: Record<string, string | number>): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const ExportFlags: typeof export_flags;
++    /** @deprecated Use createClassBinder() instead. */
++    export function rpc(config?: RPCConfig): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const Rpc: typeof rpc;
++    /**
++     * auto initialized on ready (before _ready called)
++     *
++     * @deprecated Use createClassBinder() instead.
++     */
++    export function onready(evaluator: string): (target: any, name: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const OnReady: typeof onready;
++    /** @deprecated Use createClassBinder() instead. */
++    export function tool(): (target: any, name: undefined) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const Tool: typeof tool;
++    /** @deprecated Use createClassBinder() instead. */
++    export function icon(path: string): (target: any, name: undefined) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const Icon: typeof icon;
++    /** @deprecated Use createClassBinder() instead. */
++    export function deprecated(message?: string): (target: any, name?: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const Deprecated: typeof deprecated;
++    /** @deprecated Use createClassBinder() instead. */
++    export function experimental(message?: string): (target: any, name?: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const Experimental: typeof experimental;
++    /** @deprecated Use createClassBinder() instead. */
++    export function help(message?: string): (target: any, name?: string) => void;
++    /** @deprecated Use createClassBinder() instead. */
++    export const Help: typeof help;
++    export type ClassMemberDecorator<RestrictedContext extends ClassMemberDecoratorContext = ClassMemberDecoratorContext> = <Context extends RestrictedContext>(target: ClassMemberDecoratorTarget<Context>, context: Context) => void | ClassMemberDecoratorReturn<Context>;
++    export type ClassMemberDecoratorTarget<Context extends ClassMemberDecoratorContext> = Context extends ClassMethodDecoratorContext<infer _, infer Value> ? (...args: unknown[]) => Value : Context extends ClassGetterDecoratorContext<infer _, infer Value> ? () => Value : Context extends ClassSetterDecoratorContext<infer _, infer Value> ? (value: Value) => void : Context extends ClassFieldDecoratorContext ? undefined : Context extends ClassAccessorDecoratorContext<infer _, infer Value> ? {
++        get: () => Value;
++        set: (value: Value) => void;
++    } : never;
++    export type ClassMemberDecoratorReturn<Context extends ClassMemberDecoratorContext> = Context extends ClassMethodDecoratorContext<infer This, infer Value> ? (this: This, ...args: unknown[]) => Value : Context extends ClassGetterDecoratorContext<infer This, infer Value> ? (this: This) => Value : Context extends ClassSetterDecoratorContext<infer This, infer Value> ? (this: This, value: Value) => void : Context extends ClassFieldDecoratorContext<infer This, infer Value> ? (this: This, initialValue: Value) => Value : Context extends ClassAccessorDecoratorContext<infer This, infer Value> ? {
++        get?(this: This): Value;
++        set?(this: This, value: Value): void;
++        init?(this: This, initialValue: Value): Value;
++    } : never;
++    export type ClassDecorator<This extends abstract new (...args: any) => any = abstract new (...args: any) => any> = (target: This, context: ClassDecoratorContext<This>) => void;
++    export type ClassDecoratorClass<Context extends ClassDecoratorContext> = Context extends ClassDecoratorContext<infer Class> ? Class : never;
++    export type Decorator<RestrictedContext extends DecoratorContext = DecoratorContext> = RestrictedContext extends ClassDecoratorContext ? <Context extends RestrictedContext>(target: ClassDecoratorClass<Context>, context: Context) => void : RestrictedContext extends ClassMemberDecoratorContext ? <Context extends RestrictedContext>(target: ClassMemberDecoratorTarget<Context>, context: Context) => void | ClassMemberDecoratorReturn<Context> : never;
++    export type AnyDecorator = (value: unknown, context: DecoratorContext) => unknown;
++    export type ClassValueMemberDecoratorContext<This = unknown, Value = unknown> = ClassGetterDecoratorContext<This, Value> | ClassSetterDecoratorContext<This, Value> | ClassFieldDecoratorContext<This, Value> | ClassAccessorDecoratorContext<This, Value>;
++    export function createClassBinder(): ClassBinder;
++}
++declare module "godot.typeloader" {
++    /**
++     * @param type the loaded type or function in godot module
++     */
++    export type TypeLoadedCallback = (type: any) => void;
++    export function on_type_loaded(type_name: string | string[], callback: TypeLoadedCallback): void;
++}
++declare module "jsb.core" { }
++declare module "jsb.inject" { }
++declare module "jsb.polyfill" {
++    export {};
++}
+diff --git a/scripts/out/jsb.runtime.bundle.js b/scripts/out/jsb.runtime.bundle.js
+new file mode 100644
+index 0000000..64bc313
+--- /dev/null
++++ b/scripts/out/jsb.runtime.bundle.js
+@@ -0,0 +1,2230 @@
++"use strict";
++define("godot.lib.api", ["require", "exports"], function (require, exports) {
++    "use strict";
++    const godot_api = require("godot");
++    const jsb_api = require("godot-jsb");
++    const ProxyTarget = godot_api.ProxyTarget;
++    const { get_class, get_enum, get_enum_value, get_internal_mapping, get_member } = jsb_api.internal.names;
++    function pascal_to_upper_snake_case(str) {
++        return str.replace(/[a-z][A-Z]|[0-9][A-Z][a-z]/g, (m) => `${m[0]}_${m.slice(1)}`).toUpperCase();
++    }
++    function is_basic_object(value) {
++        const proto = Object.getPrototypeOf(value);
++        return proto === Object.prototype || !proto;
++    }
++    function proxy_unwrap_value(value) {
++        return value?.[ProxyTarget] ?? value;
++    }
++    function proxy_wrap_value(value) {
++        if (value == null) {
++            return value;
++        }
++        if (value[ProxyTarget]) {
++            return value;
++        }
++        if (typeof value === "function") {
++            return function_proxy(value);
++        }
++        if (typeof value !== "object") {
++            return value;
++        }
++        if (Array.isArray(value)) {
++            return array_proxy(value);
++        }
++        const constructor = value.constructor;
++        if (constructor != null && constructor === globalThis[constructor.name]) {
++            // JS built-in
++            return value;
++        }
++        return is_basic_object(value) ? object_proxy(value) : instance_proxy(value);
++    }
++    const object_handler = {
++        get(target, p, _receiver) {
++            if (p === ProxyTarget) {
++                return target;
++            }
++            const value = Reflect.get(target, p);
++            const descriptor = Object.getOwnPropertyDescriptor(target, p);
++            if (typeof p !== "string" || (descriptor && !descriptor.writable && !descriptor.configurable)) {
++                return value;
++            }
++            if (p[0]?.toUpperCase() === p[0] &&
++                value &&
++                typeof value === "object" &&
++                is_basic_object(value) &&
++                !Object.entries(value).find(([k, v]) => k[0].toUpperCase() !== k[0] || typeof v !== "number")) {
++                return enum_proxy(value);
++            }
++            return proxy_wrap_value(value);
++        },
++        getOwnPropertyDescriptor(target, p) {
++            return (Reflect.getOwnPropertyDescriptor(target, typeof p === "string" ? get_member(p) : p) ??
++                Reflect.getOwnPropertyDescriptor(target, p));
++        },
++        has(target, p) {
++            return Reflect.has(target, typeof p === "string" ? get_member(p) : p) || Reflect.has(target, p);
++        },
++        ownKeys(target) {
++            return Reflect.ownKeys(target).map((key) => (typeof key === "string" && get_internal_mapping(key)) || key);
++        },
++        set(target, p, new_value, _receiver) {
++            return Reflect.set(target, typeof p === "string" ? get_member(p) : p, new_value);
++        },
++    };
++    const object_properties_handler = {
++        ...object_handler,
++        get(target, p, _receiver) {
++            if (p === ProxyTarget) {
++                return target;
++            }
++            const descriptor = Object.getOwnPropertyDescriptor(target, p);
++            if (typeof p !== "string" || (descriptor && !descriptor.writable && !descriptor.configurable)) {
++                return Reflect.get(target, p);
++            }
++            const value = Reflect.get(target, p !== "toString" ? get_member(p) : p);
++            if (p[0]?.toUpperCase() === p[0] &&
++                value &&
++                typeof value === "object" &&
++                is_basic_object(value) &&
++                !Object.entries(value).find(([k, v]) => k[0].toUpperCase() !== k[0] || typeof v !== "number")) {
++                return enum_proxy(value);
++            }
++            return proxy_wrap_value(value);
++        },
++    };
++    function array_proxy(arr) {
++        return new Proxy(arr, object_handler);
++    }
++    function object_proxy(obj, remap_properties) {
++        return new Proxy(obj, remap_properties ? object_properties_handler : object_handler);
++    }
++    const key_only_handler = {
++        apply: function (target, this_arg, args) {
++            return Reflect.apply(target, this_arg?.[ProxyTarget] ?? this_arg, args);
++        },
++        get(target, p, _receiver) {
++            if (p === ProxyTarget) {
++                return target;
++            }
++            const descriptor = Object.getOwnPropertyDescriptor(target, p);
++            if (typeof p !== "string" || (descriptor && !descriptor.writable && !descriptor.configurable)) {
++                return Reflect.get(target, p);
++            }
++            return key_only_proxy(Reflect.get(target, p !== "toString" ? get_member(p) : p));
++        },
++    };
++    function key_only_proxy(target) {
++        return new Proxy(target, key_only_handler);
++    }
++    const instance_handler = {
++        defineProperty() {
++            return false;
++        },
++        deleteProperty() {
++            return false;
++        },
++        get(target, p, _receiver) {
++            if (p === ProxyTarget) {
++                return target;
++            }
++            if (typeof p !== "string" || p === "constructor") {
++                return Reflect.get(target, p);
++            }
++            return proxy_wrap_value(Reflect.get(target, p !== "toString" ? get_member(p) : p));
++        },
++        getOwnPropertyDescriptor(target, p) {
++            return Reflect.getOwnPropertyDescriptor(target, typeof p === "string" ? get_member(p) : p);
++        },
++        has(target, p) {
++            return Reflect.has(target, typeof p === "string" ? get_member(p) : p);
++        },
++        isExtensible() {
++            return false;
++        },
++        ownKeys(target) {
++            return Reflect.ownKeys(target).map((key) => (typeof key === "string" && get_internal_mapping(key)) || key);
++        },
++        preventExtensions() {
++            return true;
++        },
++        set(target, p, new_value, _receiver) {
++            return Reflect.set(target, typeof p === "string" ? get_member(p) : p, new_value);
++        },
++        setPrototypeOf(_target) {
++            return false;
++        },
++    };
++    function instance_proxy(target_instance) {
++        return new Proxy(target_instance, instance_handler);
++    }
++    const class_handler = {
++        ...instance_handler,
++        construct(target, args, _new_target) {
++            return instance_proxy(new target(...args));
++        },
++        get(target, p, _receiver) {
++            if (p === ProxyTarget) {
++                return target;
++            }
++            if (p === Symbol.hasInstance) {
++                return Function[Symbol.hasInstance].bind(target);
++            }
++            if (typeof p !== "string") {
++                return Reflect.get(target, p);
++            }
++            const descriptor = Object.getOwnPropertyDescriptor(target, p);
++            if (descriptor && !descriptor.writable && !descriptor.configurable) {
++                return Reflect.get(target, p);
++            }
++            if (p === "prototype") {
++                const proto = Reflect.get(target, "prototype");
++                return proto && class_proxy(proto);
++            }
++            // Preserve native JS class/function stringification behavior.
++            // Mapping to Godot `to_string` here can bind an invalid receiver.
++            if (p === "toString") {
++                return Reflect.get(target, p);
++            }
++            if (p[0]?.toUpperCase() !== p[0]) {
++                return proxy_wrap_value(Reflect.get(target, get_member(p)));
++            }
++            if (p.toUpperCase() === p) {
++                return proxy_wrap_value(Reflect.get(target, p));
++            }
++            return enum_proxy(Reflect.get(target, get_enum(p)));
++        },
++    };
++    function class_proxy(target_class) {
++        return new Proxy(target_class, class_handler);
++    }
++    const function_handler = {
++        ...class_handler,
++        apply: function (target, this_arg, args) {
++            return proxy_wrap_value(Reflect.apply(target, this_arg?.[ProxyTarget] ?? this_arg, args.map(proxy_wrap_value)));
++        },
++    };
++    function function_proxy(fn) {
++        return new Proxy(fn, function_handler);
++    }
++    const enum_handler = {
++        defineProperty() {
++            return false;
++        },
++        deleteProperty() {
++            return false;
++        },
++        get(target, p, _receiver) {
++            if (p === ProxyTarget) {
++                return target;
++            }
++            if (typeof p !== "string") {
++                return Reflect.get(target, p);
++            }
++            return Reflect.get(target, get_enum_value(p));
++        },
++        getOwnPropertyDescriptor(target, p) {
++            return Reflect.getOwnPropertyDescriptor(target, typeof p === "string" ? get_enum_value(p) : p);
++        },
++        has(target, p) {
++            return Reflect.has(target, typeof p === "string" ? get_enum_value(p) : p);
++        },
++        isExtensible() {
++            return false;
++        },
++        ownKeys(target) {
++            return Reflect.ownKeys(target).map((key) => (typeof key === "string" ? pascal_to_upper_snake_case(key) : key));
++        },
++        preventExtensions() {
++            return true;
++        },
++        set() {
++            return false;
++        },
++        setPrototypeOf() {
++            return false;
++        },
++    };
++    function enum_proxy(target_enum) {
++        if (typeof target_enum !== "object") {
++            return target_enum;
++        }
++        return new Proxy(target_enum, enum_handler);
++    }
++    const api_handler = (target) => ({
++        defineProperty() {
++            return false;
++        },
++        deleteProperty() {
++            return false;
++        },
++        get(_pseudo_target, p, _receiver) {
++            if (p === ProxyTarget) {
++                return target;
++            }
++            if (p in _pseudo_target) {
++                return _pseudo_target[p];
++            }
++            if (typeof p !== "string") {
++                return Reflect.get(target, p);
++            }
++            if (p === "toString") {
++                return proxy_wrap_value(Reflect.get(target, p));
++            }
++            // Special case, see jsb_godot_module_loader.cpp
++            if (p === "Variant") {
++                return object_proxy(Reflect.get(target, p));
++            }
++            if (p[0]?.toUpperCase() !== p[0]) {
++                return proxy_wrap_value(Reflect.get(target, get_member(p)));
++            }
++            const value = Reflect.get(target, get_class(p));
++            if (typeof value === "function") {
++                return class_proxy(value);
++            }
++            if (value == null || typeof value !== "object") {
++                return value;
++            }
++            return is_basic_object(value) ? enum_proxy(value) : instance_proxy(value);
++        },
++        getOwnPropertyDescriptor(_pseudo_target, p) {
++            if (p in _pseudo_target) {
++                return Reflect.getOwnPropertyDescriptor(_pseudo_target, p);
++            }
++            return Reflect.getOwnPropertyDescriptor(target, typeof p === "string" ? get_member(p) : p);
++        },
++        has(_pseudo_target, p) {
++            return Reflect.has(target, typeof p === "string" ? get_class(p) : p) || Reflect.has(_pseudo_target, p);
++        },
++        isExtensible() {
++            return false;
++        },
++        ownKeys(_pseudo_target) {
++            return Reflect.ownKeys(target)
++                .map((key) => (typeof key === "string" && get_internal_mapping(key)) || key)
++                .concat(Reflect.ownKeys(_pseudo_target));
++        },
++        preventExtensions() {
++            return true;
++        },
++        set(_pseudo_target, p, new_value, _receiver) {
++            return Reflect.set(target, typeof p === "string" ? get_member(p) : p, new_value);
++        },
++        setPrototypeOf(_pseudo_target) {
++            return false;
++        },
++    });
++    const proxy = {
++        array_proxy,
++        class_proxy,
++        enum_proxy,
++        function_proxy,
++        instance_proxy,
++        key_only_proxy,
++        object_proxy,
++        proxy_unwrap_value,
++        proxy_wrap_value,
++    };
++    const jsb = object_proxy(jsb_api);
++    const api = new Proxy({
++        jsb,
++        proxy,
++    }, api_handler(godot_api));
++    return api;
++});
++define("godot.annotations", ["require", "exports", "godot.lib.api"], function (require, exports, lib_api) {
++    "use strict";
++    Object.defineProperty(exports, "__esModule", { value: true });
++    exports.Help = exports.Experimental = exports.Deprecated = exports.Icon = exports.Tool = exports.OnReady = exports.Rpc = exports.ExportFlags = exports.ExportEnum = exports.ExportVar = exports.ExportObject = exports.ExportDictionary = exports.ExportArray = exports.ExportExpEasing = exports.ExportGlobalDir = exports.ExportGlobalFile = exports.ExportFile = exports.ExportIntRange = exports.ExportRange = exports.ExportMultiline = exports.ExportSignal = void 0;
++    exports.EnumType = EnumType;
++    exports.TypePair = TypePair;
++    exports.signal = signal;
++    exports.export_multiline = export_multiline;
++    exports.export_range = export_range;
++    exports.export_range_i = export_range_i;
++    exports.export_file = export_file;
++    exports.export_dir = export_dir;
++    exports.export_global_file = export_global_file;
++    exports.export_global_dir = export_global_dir;
++    exports.export_exp_easing = export_exp_easing;
++    exports.export_array = export_array;
++    exports.export_dictionary = export_dictionary;
++    exports.export_object = export_object;
++    exports.export_ = export_;
++    exports.Export = Export;
++    exports.export_var = export_var;
++    exports.export_enum = export_enum;
++    exports.export_flags = export_flags;
++    exports.rpc = rpc;
++    exports.onready = onready;
++    exports.tool = tool;
++    exports.icon = icon;
++    exports.deprecated = deprecated;
++    exports.experimental = experimental;
++    exports.help = help;
++    exports.createClassBinder = createClassBinder;
++    const { jsb, proxy, FloatType, IntegerType, Node, PropertyHint, PropertyUsageFlags, ProxyTarget, Resource, Variant } = lib_api;
++    function legacy_decorators_check(context) {
++        if (typeof context === "object") {
++            throw new Error(`Legacy decorators must be built with experimentalDecorators enabled. Use createClassBinder() instead.`);
++        }
++    }
++    function guess_type_name(type) {
++        if (typeof type === "function") {
++            return type.name;
++        }
++        if (type && typeof type === "object") {
++            if (typeof type.constructor === "function") {
++                return type.constructor.name;
++            }
++            let proto = Object.getPrototypeOf(type);
++            if (typeof proto === "object") {
++                return guess_type_name(proto);
++            }
++        }
++        return type;
++    }
++    function resolve_variant_type(enum_name) {
++        const direct = Reflect.get(Variant.Type, enum_name);
++        if (typeof direct === "number") {
++            return direct;
++        }
++        const remapped_name = jsb.internal.names.get_enum_value(enum_name);
++        const remapped = Reflect.get(Variant.Type, remapped_name);
++        if (typeof remapped === "number") {
++            return remapped;
++        }
++        throw new Error(`Unknown Variant.Type enum value: ${enum_name}`);
++    }
++    const VariantTypeObject = resolve_variant_type("TYPE_OBJECT");
++    function invoke_with_this(fn, this_arg, ...args) {
++        return Function.prototype.call.call(fn, this_arg, ...args);
++    }
++    class EnumPlaceholderImpl {
++        target;
++        constructor(target) {
++            this.target = target;
++        }
++    }
++    class TypePairPlaceholderImpl {
++        key;
++        value;
++        constructor(key, value) {
++            this.key = key;
++            this.value = value;
++        }
++    }
++    function EnumType(type) {
++        return new EnumPlaceholderImpl(type);
++    }
++    function TypePair(key, value) {
++        return new TypePairPlaceholderImpl(key, value);
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    function signal() {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name !== "string") {
++                throw new Error("Signals must have a string name");
++            }
++            jsb.internal.add_script_signal(target, name);
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportSignal = signal;
++    /** @deprecated Use createClassBinder() instead. */
++    function export_multiline() {
++        return export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_MULTILINE_TEXT });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportMultiline = export_multiline;
++    function __export_range(type, min, max, step = 1, ...extra_hints) {
++        let hint_string = `${min},${max},${step}`;
++        if (typeof extra_hints !== "undefined") {
++            hint_string += "," + extra_hints.join(",");
++        }
++        return export_(type, { hint: PropertyHint.PROPERTY_HINT_RANGE, hint_string });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    function export_range(min, max, step = 1, ...extra_hints) {
++        return __export_range(Variant.Type.TYPE_FLOAT, min, max, step, ...extra_hints);
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportRange = export_range;
++    /** @deprecated Use createClassBinder() instead. */
++    function export_range_i(min, max, step = 1, ...extra_hints) {
++        return __export_range(Variant.Type.TYPE_INT, min, max, step, ...extra_hints);
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportIntRange = export_range_i;
++    /** String as a path to a file, custom filter provided as hint. */
++    /** @deprecated Use createClassBinder() instead. */
++    function export_file(filter) {
++        return export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_FILE, hint_string: filter });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportFile = export_file;
++    /** @deprecated Use createClassBinder() instead. */
++    function export_dir(filter) {
++        return export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_DIR, hint_string: filter });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    function export_global_file(filter) {
++        return export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_GLOBAL_FILE, hint_string: filter });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportGlobalFile = export_global_file;
++    /** @deprecated Use createClassBinder() instead. */
++    function export_global_dir(filter) {
++        return export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_GLOBAL_DIR, hint_string: filter });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportGlobalDir = export_global_dir;
++    /** @deprecated Use createClassBinder() instead. */
++    function export_exp_easing(hint) {
++        return export_(Variant.Type.TYPE_FLOAT, { hint: PropertyHint.PROPERTY_HINT_EXP_EASING, hint_string: hint });
++    }
++    // TODO: Godot's property hints make for a poor API. We should provide convenience methods to build them.
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportExpEasing = export_exp_easing;
++    /**
++     * A Shortcut for `export_(Variant.Type.TYPE_ARRAY, { class_: clazz })`
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    function export_array(clazz) {
++        return export_(Variant.Type.TYPE_ARRAY, { class_: clazz });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportArray = export_array;
++    /**
++     * A Shortcut for exporting a dictionary { class_: [key_class, value_class] })`
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    function export_dictionary(key_class, value_class) {
++        return export_(Variant.Type.TYPE_DICTIONARY, { class_: TypePair(key_class, value_class) });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportDictionary = export_dictionary;
++    function get_hint_string_for_enum(enum_type) {
++        const enum_vs = [];
++        for (const [key, value] of Object.entries(enum_type)) {
++            if (typeof value === "number" && value >= 0 && Number.isInteger(value)) {
++                enum_vs.push(`${key}:${value}`);
++            }
++        }
++        return enum_vs.join(",");
++    }
++    function get_hint_string(clazz) {
++        if (typeof clazz === "symbol") {
++            if (clazz === IntegerType) {
++                return Variant.Type.TYPE_INT + ":";
++            }
++            if (clazz === FloatType) {
++                return Variant.Type.TYPE_FLOAT + ":";
++            }
++        }
++        if (typeof clazz === "function") {
++            const prototype = clazz.prototype;
++            if (prototype instanceof Resource) {
++                return `${VariantTypeObject}/${PropertyHint.PROPERTY_HINT_RESOURCE_TYPE}:${clazz.name}`;
++            }
++            else if (prototype instanceof Node ||
++                (clazz[ProxyTarget] ?? clazz) === (Node[ProxyTarget] ?? Node)) {
++                return `${VariantTypeObject}/${PropertyHint.PROPERTY_HINT_NODE_TYPE}:${clazz.name}`;
++            }
++            else if (typeof prototype !== "undefined") {
++                // other than Resource and Node, only primitive types and enum types are supported in gdscript
++                //TODO but we barely know anything about the enum types and int/float/StringName/... in JS
++                if (clazz === Boolean) {
++                    return Variant.Type.TYPE_BOOL + ":";
++                }
++                else if (clazz === Number) {
++                    // we can only guess the type is float
++                    return Variant.Type.TYPE_FLOAT + ":";
++                }
++                else if (clazz === String) {
++                    return Variant.Type.TYPE_STRING + ":";
++                }
++                else {
++                    if (typeof clazz.__builtin_type__ === "number") {
++                        return clazz.__builtin_type__ + ":";
++                    }
++                    else {
++                        throw new Error("the given parameters are not supported or not implemented");
++                    }
++                }
++            }
++        }
++        if (typeof clazz === "object") {
++            if (clazz instanceof EnumPlaceholderImpl) {
++                return `${Variant.Type.TYPE_INT}/${Variant.Type.TYPE_INT}:${get_hint_string_for_enum(clazz.target)}`;
++            }
++            // probably an Array (as key-value type descriptor for a Dictionary)
++            if (clazz instanceof TypePairPlaceholderImpl) {
++                // special case for dictionary, int is preferred for key type of a dictionary
++                const key_type = clazz.key === Number ? Variant.Type.TYPE_INT + ":" : get_hint_string(clazz.key);
++                const value_type = get_hint_string(clazz.value);
++                if (key_type.length === 0 || value_type.length === 0) {
++                    throw new Error("the given parameters are not supported or not implemented");
++                }
++                return key_type + ";" + value_type;
++            }
++        }
++        return "";
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    function export_object(clazz) {
++        return export_(VariantTypeObject, { class_: clazz });
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportObject = export_object;
++    /**
++     * [low level export]
++     * @deprecated Use createClassBinder() instead.
++     * */
++    function export_(type, details) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name !== "string") {
++                throw new Error("Only properties with a string name/key can be exported");
++            }
++            const ebd = {
++                name,
++                type: type,
++                hint: PropertyHint.PROPERTY_HINT_NONE,
++                hint_string: "",
++                usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++            };
++            if (typeof details === "object") {
++                if (typeof details.hint === "number")
++                    ebd.hint = details.hint;
++                if (typeof details.usage === "number")
++                    ebd.usage = details.usage;
++                if (typeof details.hint_string === "string")
++                    ebd.hint_string = details.hint_string;
++                // overwrite hint if class_ is provided
++                try {
++                    //TODO more general and unified way to handle all types
++                    if (type === VariantTypeObject) {
++                        const clazz = details.class_;
++                        if (typeof clazz === "function") {
++                            const prototype = clazz.prototype;
++                            if (prototype instanceof Resource) {
++                                ebd.hint = PropertyHint.PROPERTY_HINT_RESOURCE_TYPE;
++                                ebd.hint_string = clazz.name;
++                                ebd.usage |= PropertyUsageFlags.PROPERTY_USAGE_SCRIPT_VARIABLE;
++                            }
++                            else if (prototype instanceof Node ||
++                                (clazz[ProxyTarget] ?? clazz) === (Node[ProxyTarget] ?? Node)) {
++                                ebd.hint = PropertyHint.PROPERTY_HINT_NODE_TYPE;
++                                ebd.hint_string = clazz.name;
++                                ebd.usage |= PropertyUsageFlags.PROPERTY_USAGE_SCRIPT_VARIABLE;
++                            }
++                        }
++                        jsb.internal.add_script_property(target, ebd);
++                        return;
++                    }
++                    let hint_string = get_hint_string(details.class_);
++                    if (hint_string.length > 0) {
++                        ebd.hint =
++                            type === Variant.Type.TYPE_ARRAY
++                                ? PropertyHint.PROPERTY_HINT_ARRAY_TYPE
++                                : PropertyHint.PROPERTY_HINT_TYPE_STRING;
++                        ebd.hint_string = hint_string;
++                        ebd.usage |= PropertyUsageFlags.PROPERTY_USAGE_SCRIPT_VARIABLE;
++                    }
++                }
++                catch (e) {
++                    if (ebd.hint === PropertyHint.PROPERTY_HINT_NONE) {
++                        console.warn("the given parameters are not supported or not implemented (you need to give hint/hint_string/usage manually)", `class:${guess_type_name(Object.getPrototypeOf(target))} prop:${name} type:${type} class_:${guess_type_name(details.class_)}`);
++                    }
++                }
++            }
++            jsb.internal.add_script_property(target, ebd);
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    function Export(type, details) {
++        const { hintString, class: cls, ...consistent } = details ?? {};
++        return export_(type, {
++            ...consistent,
++            hint_string: hintString,
++            class_: cls,
++        });
++    }
++    /**
++     * In Godot, class members can be exported.
++     * This means their value gets saved along with the resource (such as the scene) they're attached to.
++     * They will also be available for editing in the property editor.
++     * Exporting is done by using the `@export_var` (or `@export_`) annotation.
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    function export_var(type, details) {
++        return export_(type, details);
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportVar = export_var;
++    /**
++     * NOTE only int value enums are allowed
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    function export_enum(enum_type) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name !== "string") {
++                throw new Error("Only properties with a string name/key can be exported");
++            }
++            jsb.internal.add_script_property(target, {
++                name,
++                type: Variant.Type.TYPE_INT,
++                hint: PropertyHint.PROPERTY_HINT_ENUM,
++                hint_string: get_hint_string_for_enum(enum_type),
++                usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++            });
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportEnum = export_enum;
++    /**
++     * NOTE only int value enums are allowed
++     */
++    /** @deprecated Use createClassBinder() instead. */
++    function export_flags(enum_type) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name !== "string") {
++                throw new Error("Only properties with a string name/key can be exported");
++            }
++            const enum_vs = [];
++            for (let c in enum_type) {
++                const v = enum_type[c];
++                if (typeof v === "string" && enum_type[v] != 0) {
++                    enum_vs.push(v + ":" + c);
++                }
++            }
++            const ebd = {
++                name,
++                type: Variant.Type.TYPE_INT,
++                hint: PropertyHint.PROPERTY_HINT_FLAGS,
++                hint_string: enum_vs.join(","),
++                usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++            };
++            jsb.internal.add_script_property(target, ebd);
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.ExportFlags = export_flags;
++    /** @deprecated Use createClassBinder() instead. */
++    function rpc(config) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name !== "string") {
++                throw new Error("Only methods with a string name can be registered for RPC");
++            }
++            if (typeof config !== "undefined") {
++                jsb.internal.add_script_rpc(target, name, {
++                    rpc_mode: config.mode,
++                    call_local: typeof config.sync !== "undefined" ? config.sync == "call_local" : undefined,
++                    transfer_mode: config.transfer_mode,
++                    channel: config.transfer_channel,
++                });
++            }
++            else {
++                jsb.internal.add_script_rpc(target, name, {});
++            }
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.Rpc = rpc;
++    /**
++     * auto initialized on ready (before _ready called)
++     *
++     * @deprecated Use createClassBinder() instead.
++     */
++    function onready(evaluator) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name !== "string") {
++                throw new Error("Only methods with a string name can be registered as an onready callback");
++            }
++            const ebd = { name, evaluator: evaluator };
++            jsb.internal.add_script_ready(target, ebd);
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.OnReady = onready;
++    /** @deprecated Use createClassBinder() instead. */
++    function tool() {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            jsb.internal.add_script_tool(target);
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.Tool = tool;
++    /** @deprecated Use createClassBinder() instead. */
++    function icon(path) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            jsb.internal.add_script_icon(target, path);
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.Icon = icon;
++    /** @deprecated Use createClassBinder() instead. */
++    function deprecated(message) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name === "undefined") {
++                jsb.internal.set_script_doc(target, undefined, 0, message ?? "");
++                return;
++            }
++            if (typeof name !== "string" || !name) {
++                throw new Error("Only methods/properties with a string name/key can be marked as deprecated");
++            }
++            jsb.internal.set_script_doc(target, name, 0, message ?? "");
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.Deprecated = deprecated;
++    /** @deprecated Use createClassBinder() instead. */
++    function experimental(message) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name === "undefined") {
++                jsb.internal.set_script_doc(target, undefined, 1, message ?? "");
++                return;
++            }
++            if (typeof name !== "string" || !name) {
++                throw new Error("Only methods/properties with a string name/key can be marked as experimental");
++            }
++            jsb.internal.set_script_doc(target, name, 1, message ?? "");
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.Experimental = experimental;
++    /** @deprecated Use createClassBinder() instead. */
++    function help(message) {
++        return function (target, name) {
++            legacy_decorators_check(name);
++            if (typeof name === "undefined") {
++                jsb.internal.set_script_doc(target, undefined, 2, message ?? "");
++                return;
++            }
++            if (typeof name !== "string" || !name) {
++                throw new Error("Only methods/properties with a string name/key can be given a help string");
++            }
++            jsb.internal.set_script_doc(target, name, 2, message ?? "");
++        };
++    }
++    /** @deprecated Use createClassBinder() instead. */
++    exports.Help = help;
++    function createClassBinder() {
++        const signal_names = [];
++        const property_info_map = {};
++        const rpc_map = {};
++        const onready_map = {};
++        let is_tool = false;
++        let icon_path = undefined;
++        const deprecated_map = {};
++        const experimental_map = {};
++        const help_map = {};
++        let executed = false;
++        const hint_string_name = jsb.internal.names.get_member("hint_string");
++        // primary class decorator
++        function bind_class() {
++            if (executed) {
++                throw new Error("Re-using the same class binder across multiple classes is not supported");
++            }
++            executed = true;
++            return (target, context) => {
++                if (typeof context !== "object") {
++                    throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                }
++                if (!context.name) {
++                    throw new Error("Only named classes can be exported for consumption by Godot");
++                }
++                const proto = target.prototype;
++                for (const signal_name of signal_names) {
++                    jsb.internal.add_script_signal(proto, signal_name);
++                }
++                for (const info of Object.values(property_info_map)) {
++                    jsb.internal.add_script_property(proto, info);
++                }
++                for (const [name, config] of Object.entries(rpc_map)) {
++                    jsb.internal.add_script_rpc(proto, name, {
++                        rpc_mode: config.mode,
++                        call_local: typeof config.sync !== "undefined" ? config.sync == "call_local" : undefined,
++                        transfer_mode: config.transfer_mode,
++                        channel: config.transfer_channel,
++                    });
++                }
++                for (const [name, evaluator] of Object.entries(onready_map)) {
++                    jsb.internal.add_script_ready(proto, { name, evaluator });
++                }
++                if (is_tool) {
++                    jsb.internal.add_script_tool(target);
++                }
++                if (icon_path) {
++                    jsb.internal.add_script_icon(target, icon_path);
++                }
++                for (const [name, message] of Object.entries(deprecated_map)) {
++                    jsb.internal.set_script_doc(proto, name, 0, message ?? "");
++                }
++                for (const [name, message] of Object.entries(experimental_map)) {
++                    jsb.internal.set_script_doc(proto, name, 1, message ?? "");
++                }
++                for (const [name, message] of Object.entries(help_map)) {
++                    jsb.internal.set_script_doc(proto, name, 2, message ?? "");
++                }
++            };
++        }
++        function add_property(name, type, options) {
++            if (property_info_map[name]) {
++                throw new Error(`Property ${name} already exported. You must decorate a getter or a setter, not both.`);
++            }
++            const ebd = {
++                name,
++                type: type,
++                hint: PropertyHint.PROPERTY_HINT_NONE,
++                hint_string: "",
++                usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++            };
++            if (typeof options === "object") {
++                if (typeof options.hint === "number") {
++                    ebd.hint = options.hint;
++                }
++                if (typeof options.usage === "number") {
++                    ebd.usage = options.usage;
++                }
++                if (typeof options.hint_string === "string") {
++                    ebd.hint_string = options.hint_string;
++                }
++                // overwrite hint if class_ is provided
++                try {
++                    //TODO more general and unified way to handle all types
++                    if (type === VariantTypeObject) {
++                        const clazz = options.class;
++                        if (typeof clazz === "function") {
++                            const prototype = clazz.prototype;
++                            if (prototype instanceof Resource) {
++                                ebd.hint = PropertyHint.PROPERTY_HINT_RESOURCE_TYPE;
++                                ebd.hint_string = clazz.name;
++                                ebd.usage |= PropertyUsageFlags.PROPERTY_USAGE_SCRIPT_VARIABLE;
++                            }
++                            else if (prototype instanceof Node ||
++                                (clazz[ProxyTarget] ?? clazz) === (Node[ProxyTarget] ?? Node)) {
++                                ebd.hint = PropertyHint.PROPERTY_HINT_NODE_TYPE;
++                                ebd.hint_string = clazz.name;
++                                ebd.usage |= PropertyUsageFlags.PROPERTY_USAGE_SCRIPT_VARIABLE;
++                            }
++                        }
++                        property_info_map[name] = ebd;
++                        return;
++                    }
++                    let hint_string = get_hint_string(options.class);
++                    if (hint_string.length > 0) {
++                        ebd.hint =
++                            type === Variant.Type.TYPE_ARRAY
++                                ? PropertyHint.PROPERTY_HINT_ARRAY_TYPE
++                                : PropertyHint.PROPERTY_HINT_TYPE_STRING;
++                        ebd.hint_string = hint_string;
++                        ebd.usage |= PropertyUsageFlags.PROPERTY_USAGE_SCRIPT_VARIABLE;
++                    }
++                }
++                catch (e) {
++                    if (ebd.hint === PropertyHint.PROPERTY_HINT_NONE) {
++                        console.warn("the given parameters are not supported or not implemented (you need to give hint/hint_string/usage manually)", `prop:${name} type:${type} class_:${guess_type_name(options.class)}`);
++                    }
++                }
++            }
++            property_info_map[name] = ebd;
++        }
++        function bind_export(type, options) {
++            return (_target, context) => {
++                if (typeof context !== "object") {
++                    throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                }
++                const name = context.name;
++                if (typeof name !== "string") {
++                    throw new Error("Only properties with a string name/key can be exported");
++                }
++                switch (context.kind) {
++                    case "accessor":
++                    case "field":
++                    case "getter":
++                    case "setter":
++                        add_property(name, type, options && proxy.object_proxy(options, true));
++                        return;
++                    default: {
++                        const _context = context; // Exhaustive check
++                        throw new Error(`The export decorator can not be used to decorate a ${context.kind}. Decorate an auto-accessor, setter or field.`);
++                    }
++                }
++            };
++        }
++        function bind_range(type, min, max, step = 1, ...extra_hints) {
++            return bind_export(type, {
++                hint: PropertyHint.PROPERTY_HINT_RANGE,
++                [hint_string_name]: [min, max, step, ...extra_hints].join(","),
++            });
++        }
++        return proxy.key_only_proxy(Object.assign(bind_class, {
++            // additional class decorators
++            tool() {
++                return function (target, _context) {
++                    jsb.internal.add_script_tool(target);
++                };
++            },
++            icon(path) {
++                return function (target, _context) {
++                    jsb.internal.add_script_icon(target, path);
++                };
++            },
++            // member decorators
++            export: Object.assign(bind_export, {
++                multiline() {
++                    return bind_export(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_MULTILINE_TEXT });
++                },
++                range(min, max, step, ...extra_hints) {
++                    return bind_range(Variant.Type.TYPE_FLOAT, min, max, step, ...extra_hints);
++                },
++                /** String as a path to a file, custom filter provided as hint. */
++                range_int(min, max, step, ...extra_hints) {
++                    return bind_range(Variant.Type.TYPE_INT, min, max, step, ...extra_hints);
++                },
++                file(filter) {
++                    return bind_export(Variant.Type.TYPE_STRING, {
++                        hint: PropertyHint.PROPERTY_HINT_FILE,
++                        [hint_string_name]: filter,
++                    });
++                },
++                dir(filter) {
++                    return bind_export(Variant.Type.TYPE_STRING, {
++                        hint: PropertyHint.PROPERTY_HINT_DIR,
++                        [hint_string_name]: filter,
++                    });
++                },
++                global_file(filter) {
++                    return bind_export(Variant.Type.TYPE_STRING, {
++                        hint: PropertyHint.PROPERTY_HINT_GLOBAL_FILE,
++                        [hint_string_name]: filter,
++                    });
++                },
++                global_dir(filter) {
++                    return bind_export(Variant.Type.TYPE_STRING, {
++                        hint: PropertyHint.PROPERTY_HINT_GLOBAL_DIR,
++                        [hint_string_name]: filter,
++                    });
++                },
++                exp_easing(hint) {
++                    return bind_export(Variant.Type.TYPE_FLOAT, {
++                        hint: PropertyHint.PROPERTY_HINT_EXP_EASING,
++                        [hint_string_name]: hint,
++                    });
++                },
++                /**
++                 * A Shortcut for `export_(Variant.Type.TYPE_ARRAY, { class: clazz })`
++                 */
++                array(clazz) {
++                    return bind_export(Variant.Type.TYPE_ARRAY, { class: clazz });
++                },
++                /**
++                 * A Shortcut for exporting a dictionary { class: [key_class, value_class] })`
++                 */
++                dictionary(key_class, value_class) {
++                    return bind_export(Variant.Type.TYPE_DICTIONARY, { class: TypePair(key_class, value_class) });
++                },
++                object(clazz) {
++                    return bind_export(VariantTypeObject, { class: clazz });
++                },
++                enum(enum_type) {
++                    return bind_export(Variant.Type.TYPE_INT, {
++                        hint: PropertyHint.PROPERTY_HINT_ENUM,
++                        [hint_string_name]: get_hint_string_for_enum(enum_type),
++                        usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++                    });
++                },
++                flags(enum_type) {
++                    const hints = [];
++                    for (const [key, value] of Object.entries(enum_type)) {
++                        if (typeof value === "number" && value > 0 && Number.isInteger(value)) {
++                            hints.push(key + ":" + value);
++                        }
++                    }
++                    return bind_export(Variant.Type.TYPE_INT, {
++                        hint: PropertyHint.PROPERTY_HINT_FLAGS,
++                        [hint_string_name]: hints.join(","),
++                        usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++                    });
++                },
++                cache() {
++                    return (target, context) => {
++                        if (typeof context !== "object") {
++                            throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                        }
++                        const name = context.name;
++                        if (typeof name !== "string") {
++                            throw new Error("Only properties with a string name/key can be cached");
++                        }
++                        const info = property_info_map[name];
++                        if (!info) {
++                            if (context.kind === "accessor") {
++                                throw new Error(`Cache decorator must appear before the export decorator on accessor "${name}"`);
++                            }
++                            else {
++                                throw new Error(`Cache decorated setter must appear after the export decorated getter for property "${name}".`);
++                            }
++                        }
++                        info.cache = true;
++                        const update_cached_value = proxy.proxy_unwrap_value(jsb.internal.create_script_cached_property_updater(name));
++                        switch (context.kind) {
++                            case "accessor": {
++                                const set_value = target.set;
++                                return {
++                                    set: function (value) {
++                                        set_value.call(this, value);
++                                        invoke_with_this(update_cached_value, this, value);
++                                    },
++                                };
++                            }
++                            case "setter": {
++                                return function (value) {
++                                    target.call(this, value);
++                                    invoke_with_this(update_cached_value, this);
++                                };
++                            }
++                            default:
++                                throw new Error(`The cache decorator can not be used to decorate a ${context.kind}. Decorate an auto-accessor, setter or field.`);
++                        }
++                    };
++                },
++            }),
++            signal() {
++                return (_target, context) => {
++                    if (typeof context !== "object") {
++                        throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                    }
++                    context = proxy.proxy_unwrap_value(context);
++                    const name = context.name;
++                    if (typeof name !== "string") {
++                        throw new Error("Only signals with a string name can be exported");
++                    }
++                    signal_names.push(name);
++                    if (context.kind === "accessor") {
++                        return {
++                            get: proxy.proxy_unwrap_value(jsb.internal.create_script_signal_getter(name)),
++                            set: () => {
++                                throw new Error(`Signal properties cannot be reassigned. Did you mean to .connect() a callback instead?`);
++                            },
++                        };
++                    }
++                    else if (context.kind === "field") {
++                        context.addInitializer(function () {
++                            context.access.set(this, invoke_with_this(proxy.proxy_unwrap_value(jsb.internal.create_script_signal_getter(name)), this));
++                        });
++                        return undefined;
++                    }
++                    else if (context.kind === "getter") {
++                        return proxy.proxy_unwrap_value(jsb.internal.create_script_signal_getter(name));
++                    }
++                    else {
++                        throw new Error(`The signal decorator can not be used to decorate a ${context.kind}. A \`readonly\` field is recommended.`);
++                    }
++                };
++            },
++            rpc(config) {
++                return (_target, context) => {
++                    if (typeof context !== "object") {
++                        throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                    }
++                    const name = context.name;
++                    if (typeof name !== "string") {
++                        throw new Error("Only methods with a string name can be remote procedures");
++                    }
++                    rpc_map[name] = config ? proxy.object_proxy(config, true) : {};
++                };
++            },
++            /**
++             * auto initialized on ready (before _ready called)
++             * @param evaluator for now, only string is accepted
++             */
++            onready(evaluator) {
++                return (_target, context) => {
++                    if (typeof context !== "object") {
++                        throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                    }
++                    const name = context.name;
++                    if (typeof name !== "string") {
++                        throw new Error("Only methods with a string name can be registered as an onready callback");
++                    }
++                    onready_map[name] = evaluator;
++                };
++            },
++            // class or member decorators
++            deprecated(message) {
++                return function (target, context) {
++                    if (typeof context !== "object") {
++                        throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                    }
++                    if (context.kind === "class") {
++                        jsb.internal.set_script_doc(target, undefined, 0, message ?? "");
++                        return;
++                    }
++                    const name = typeof context === "object" ? context.name : context;
++                    if (typeof name !== "string") {
++                        throw new Error("Only methods/properties with a string name/key can be marked as deprecated");
++                    }
++                    deprecated_map[name] = message ?? "";
++                };
++            },
++            experimental(message) {
++                return function (target, context) {
++                    if (typeof context !== "object") {
++                        throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                    }
++                    if (context.kind === "class") {
++                        jsb.internal.set_script_doc(target, undefined, 1, message ?? "");
++                        return;
++                    }
++                    const name = typeof context === "object" ? context.name : context;
++                    if (typeof name !== "string") {
++                        throw new Error("Only methods/properties with a string name/key can be marked as experimental");
++                    }
++                    experimental_map[name] = message ?? "";
++                };
++            },
++            help(message) {
++                return function (target, context) {
++                    if (typeof context !== "object") {
++                        throw new Error("The createClassBinder() requires modern decorator support. Disable legacy decorators (experimentalDecorators) in your tsconfig.json");
++                    }
++                    if (context.kind === "class") {
++                        jsb.internal.set_script_doc(target, undefined, 2, message ?? "");
++                        return;
++                    }
++                    const name = typeof context === "object" ? context.name : context;
++                    if (typeof name !== "string") {
++                        throw new Error("Only methods/properties with a string name/key can be marked as help");
++                    }
++                    help_map[name] = message ?? "";
++                };
++            },
++        }));
++    }
++});
++define("godot.typeloader", ["require", "exports"], function (require, exports) {
++    "use strict";
++    Object.defineProperty(exports, "__esModule", { value: true });
++    exports.on_type_loaded = on_type_loaded;
++    const type_db = {};
++    class TypeProcessor {
++        // avoid cyclic call on the same type
++        locked = false;
++        callbacks = [];
++        push(callback) {
++            if (this.locked) {
++                throw new Error("TypeProcessor is locked");
++            }
++            this.callbacks.push(callback);
++            return this;
++        }
++        exec(type) {
++            if (this.locked) {
++                throw new Error("TypeProcessor is locked");
++            }
++            this.locked = true;
++            for (let cb of this.callbacks) {
++                try {
++                    cb(type);
++                }
++                catch (e) {
++                    console.error(e);
++                }
++            }
++            this.locked = false;
++        }
++    }
++    const type_processors = new Map();
++    function _on_type_loaded(type_name, callback) {
++        if (typeof type_name !== "string") {
++            throw new Error("type_name must be a string");
++        }
++        if (typeof type_db[type_name] !== "undefined") {
++            callback(type_db[type_name]);
++            return;
++        }
++        if (type_processors.has(type_name)) {
++            type_processors.get(type_name).push(callback);
++        }
++        else {
++            type_processors.set(type_name, new TypeProcessor().push(callback));
++        }
++    }
++    // callback on a godot type loaded by jsb_godot_module_loader.
++    // each callback will be called only once.
++    function on_type_loaded(type_name, callback) {
++        if (typeof type_name === "string") {
++            _on_type_loaded(type_name, callback);
++        }
++        else if (Array.isArray(type_name)) {
++            for (let name of type_name) {
++                _on_type_loaded(name, callback);
++            }
++        }
++        else {
++            throw new Error("type_name must be a string or an array of strings");
++        }
++    }
++    // callback on a godot type loaded by jsb_godot_module_loader
++    exports._mod_proxy_ = function (builtin_symbols, type_loader_func) {
++        return new Proxy(type_db, {
++            set: function (target, prop_name, value) {
++                if (typeof prop_name !== "string") {
++                    throw new Error(`only string key is allowed`);
++                }
++                if (typeof target[prop_name] !== "undefined") {
++                    console.warn("overwriting existing value", prop_name);
++                }
++                target[prop_name] = value;
++                return true;
++            },
++            get: function (target, prop_name) {
++                let o = target[prop_name];
++                if (typeof o === "undefined" && typeof prop_name === "string") {
++                    o = target[prop_name] =
++                        typeof builtin_symbols[prop_name] !== "undefined"
++                            ? builtin_symbols[prop_name]
++                            : type_loader_func(prop_name);
++                }
++                return o;
++            },
++        });
++    };
++    exports._post_bind_ = function (type_name, type) {
++        const processors = type_processors.get(type_name);
++        if (processors !== undefined) {
++            processors.exec(type);
++            type_processors.delete(type_name);
++        }
++    };
++});
++define("jsb.core", ["require", "exports"], function (require, exports) {
++    "use strict";
++    Object.defineProperty(exports, "__esModule", { value: true });
++    const { jsb } = require("godot.lib.api");
++    // [WARNING] ALL IMPLEMENTATIONS BELOW ARE FOR BACKWARD COMPATIBILITY ONLY.
++    // [WARNING] THEY EXIST TO TEMPORARILY SUPPORT OLD CODES THAT USE THESE FUNCTIONS.
++    // [WARNING] FOLLOW THE CHANGES IN `https://github.com/godotjs/GodotJS/tree/main/docs/breaking_changes.md` TO UPDATE YOUR CODES.
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use `SignalN<..., R>.as_promise()` instead.
++     */
++    exports.$wait = function (signal) {
++        return new Promise((resolve) => {
++            let fn = null;
++            fn = require("godot.lib.api").create(function () {
++                signal.disconnect(fn);
++                if (arguments.length == 0) {
++                    resolve(undefined);
++                    return;
++                }
++                if (arguments.length == 1) {
++                    resolve(arguments[0]);
++                    return;
++                }
++                // return as javascript array if more than one
++                resolve(Array.from(arguments));
++                jsb.internal.notify_microtasks_run();
++            });
++            signal.connect(fn, 0);
++        });
++    };
++    /**
++     * Wait for seconds as a promise.
++     * ```typescript
++     * function seconds(secs: number) {
++     *    return new Promise(function (resolve) {
++     *        setTimeout(function () {
++     *            resolve(undefined);
++     *        }, secs * 1000);
++     *    });
++     *}
++     * ```
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Implement your own version of this function.
++     * @param secs time to wait in seconds
++     * @returns Promise to await
++     */
++    exports.seconds = function (secs) {
++        return new Promise(function (resolve) {
++            setTimeout(function () {
++                resolve(undefined);
++            }, secs * 1000);
++        });
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.signal = function () {
++        return function (target, key) {
++            jsb.internal.add_script_signal(target, key);
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_multiline = function () {
++        const { PropertyHint, Variant } = require("godot.lib.api");
++        return exports.export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_MULTILINE_TEXT });
++    };
++    function __export_range(type, min, max, step = 1, ...extra_hints) {
++        const { PropertyHint } = require("godot.lib.api");
++        let hint_string = `${min},${max},${step}`;
++        if (typeof extra_hints !== "undefined") {
++            hint_string += "," + extra_hints.join(",");
++        }
++        return exports.export_(type, { hint: PropertyHint.PROPERTY_HINT_RANGE, hint_string: hint_string });
++    }
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_range = function (min, max, step = 1, ...extra_hints) {
++        const { Variant } = require("godot.lib.api");
++        return __export_range(Variant.Type.TYPE_FLOAT, min, max, step, ...extra_hints);
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_range_i = function (min, max, step = 1, ...extra_hints) {
++        const { Variant } = require("godot.lib.api");
++        return __export_range(Variant.Type.TYPE_INT, min, max, step, ...extra_hints);
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_file = function (filter) {
++        const { PropertyHint, Variant } = require("godot.lib.api");
++        return exports.export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_FILE, hint_string: filter });
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_dir = function (filter) {
++        const { PropertyHint, Variant } = require("godot.lib.api");
++        return exports.export_(Variant.Type.TYPE_STRING, { hint: PropertyHint.PROPERTY_HINT_DIR, hint_string: filter });
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_global_file = function (filter) {
++        const { PropertyHint, Variant } = require("godot.lib.api");
++        return exports.export_(Variant.Type.TYPE_STRING, {
++            hint: PropertyHint.PROPERTY_HINT_GLOBAL_FILE,
++            hint_string: filter,
++        });
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_global_dir = function (filter) {
++        const { PropertyHint, Variant } = require("godot.lib.api");
++        return exports.export_(Variant.Type.TYPE_STRING, {
++            hint: PropertyHint.PROPERTY_HINT_GLOBAL_DIR,
++            hint_string: filter,
++        });
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_exp_easing = function (hint) {
++        const { PropertyHint, Variant } = require("godot.lib.api");
++        return exports.export_(Variant.Type.TYPE_FLOAT, { hint: PropertyHint.PROPERTY_HINT_EXP_EASING, hint_string: hint });
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_ = function (type, details) {
++        const { PropertyHint, PropertyUsageFlags } = require("godot.lib.api");
++        return function (target, key) {
++            let ebd = {
++                name: key,
++                type: type,
++                hint: PropertyHint.PROPERTY_HINT_NONE,
++                hint_string: "",
++                usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++            };
++            if (typeof details === "object") {
++                if (typeof details.hint === "number")
++                    ebd.hint = details.hint;
++                if (typeof details.hint_string === "string")
++                    ebd.hint_string = details.hint_string;
++                if (typeof details.usage === "number")
++                    ebd.usage = details.usage;
++            }
++            jsb.internal.add_script_property(target, ebd);
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_enum = function (enum_type) {
++        const { PropertyHint, PropertyUsageFlags, Variant } = require("godot.lib.api");
++        return function (target, key) {
++            let enum_vs = [];
++            for (let c in enum_type) {
++                const v = enum_type[c];
++                if (typeof v === "string") {
++                    enum_vs.push(v + ":" + c);
++                }
++            }
++            let ebd = {
++                name: key,
++                type: Variant.Type.TYPE_INT,
++                hint: PropertyHint.PROPERTY_HINT_ENUM,
++                hint_string: enum_vs.join(","),
++                usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++            };
++            jsb.internal.add_script_property(target, ebd);
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.export_flags = function (enum_type) {
++        const { PropertyHint, PropertyUsageFlags, Variant } = require("godot.lib.api");
++        return function (target, key) {
++            let enum_vs = [];
++            for (let c in enum_type) {
++                const v = enum_type[c];
++                if (typeof v === "string" && enum_type[v] != 0) {
++                    enum_vs.push(v + ":" + c);
++                }
++            }
++            let ebd = {
++                name: key,
++                type: Variant.Type.TYPE_INT,
++                hint: PropertyHint.PROPERTY_HINT_FLAGS,
++                hint_string: enum_vs.join(","),
++                usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
++            };
++            jsb.internal.add_script_property(target, ebd);
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.rpc = function (config) {
++        return function (target, propertyKey) {
++            if (typeof propertyKey !== "string") {
++                throw new Error("only string is allowed as propertyKey for rpc config");
++                return;
++            }
++            if (typeof config !== "undefined") {
++                jsb.internal.add_script_rpc(target, propertyKey, {
++                    mode: config.mode,
++                    sync: typeof config.sync !== "undefined" ? config.sync == "call_local" : undefined,
++                    transfer_mode: config.transfer_mode,
++                    transfer_channel: config.transfer_channel,
++                });
++            }
++            else {
++                jsb.internal.add_script_rpc(target, propertyKey, {});
++            }
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.onready = function (evaluator) {
++        return function (target, key) {
++            let ebd = { name: key, evaluator: evaluator };
++            jsb.internal.add_script_ready(target, ebd);
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.tool = function () {
++        return function (target) {
++            jsb.internal.add_script_tool(target);
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.icon = function (path) {
++        return function (target) {
++            jsb.internal.add_script_icon(target, path);
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.deprecated = function (message) {
++        return function (target, propertyKey) {
++            if (typeof propertyKey === "undefined") {
++                jsb.internal.set_script_doc(target, undefined, 0, message ?? "");
++                return;
++            }
++            if (typeof propertyKey !== "string" || propertyKey.length == 0)
++                throw new Error("only string key is allowed for doc");
++            jsb.internal.set_script_doc(target, propertyKey, 0, message ?? "");
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.experimental = function (message) {
++        return function (target, propertyKey) {
++            if (typeof propertyKey === "undefined") {
++                jsb.internal.set_script_doc(target, undefined, 1, message ?? "");
++                return;
++            }
++            if (typeof propertyKey !== "string" || propertyKey.length == 0)
++                throw new Error("only string key is allowed for doc");
++            jsb.internal.set_script_doc(target, propertyKey, 1, message ?? "");
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot.annotations` instead.
++     */
++    exports.help = function (message) {
++        return function (target, propertyKey) {
++            if (typeof propertyKey === "undefined") {
++                jsb.internal.set_script_doc(target, undefined, 2, message ?? "");
++                return;
++            }
++            if (typeof propertyKey !== "string" || propertyKey.length == 0)
++                throw new Error("only string key is allowed for doc");
++            jsb.internal.set_script_doc(target, propertyKey, 2, message ?? "");
++        };
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot` instead.
++     */
++    exports.GLOBAL_GET = function (entry_path) {
++        const { ProjectSettings } = require("godot.lib.api");
++        return ProjectSettings.get_setting_with_override(entry_path);
++    };
++    /**
++     * FOR BACKWARD COMPATIBILITY ONLY
++     * @deprecated [WARNING] This function is deprecated. Use the same function from `godot` instead.
++     */
++    exports.EDITOR_GET = function (entry_path) {
++        const { EditorInterface } = require("godot.lib.api");
++        return EditorInterface.get_editor_settings().get(entry_path);
++    };
++});
++define("jsb.inject", ["require", "exports"], function (require, exports) {
++    "use strict";
++    Object.defineProperty(exports, "__esModule", { value: true });
++    const proxyable_prototypes = [];
++    let helpers = null;
++    function get_helpers() {
++        if (!helpers) {
++            const { GArray, GDictionary, ProxyTarget } = require("godot");
++            const get_member = require("godot-jsb").internal.names.get_member;
++            helpers = {
++                get_member,
++                proxy_wrap: function (value) {
++                    if (typeof value !== "object" || value === null) {
++                        return value;
++                    }
++                    const proto = Object.getPrototypeOf(value);
++                    return proto && proxyable_prototypes.includes(proto) ? value.proxy() : value;
++                },
++                proxy_unwrap: function (value) {
++                    if (typeof value !== "object" || value === null) {
++                        return value;
++                    }
++                    return value[ProxyTarget] ?? value;
++                },
++                godot_wrap: function (value) {
++                    if (typeof value !== "object" || value === null) {
++                        return value;
++                    }
++                    if (Array.isArray(value)) {
++                        return GArray.create(value);
++                    }
++                    const proto = Object.getPrototypeOf(value);
++                    if (proto === Object.prototype || proto === null) {
++                        return GDictionary.create(value);
++                    }
++                    return value;
++                },
++                ProxyTarget: ProxyTarget,
++            };
++        }
++        return helpers;
++    }
++    require("godot.typeloader").on_type_loaded("GArray", function (type) {
++        const helpers = get_helpers();
++        const { get_member, godot_wrap, proxy_unwrap, proxy_wrap } = helpers;
++        const ProxyTarget = helpers.ProxyTarget;
++        proxyable_prototypes.push(type.prototype);
++        type.prototype[Symbol.iterator] = function* () {
++            const get_indexed = Reflect.get(this, get_member("get_indexed"));
++            for (let i = 0; i < this.size(); ++i) {
++                yield Reflect.apply(get_indexed, this, [i]);
++            }
++        };
++        // We're not going to try expose the whole Array API, we'll just be super minimalistic. If the user is after
++        // something more complex, it'll likely be more performant to spread the GArray into a JS array anyway.
++        const pop_back_name = get_member("pop_back");
++        const push_back_name = get_member("push_back");
++        const array_api = {
++            forEach: function (callback, thisArg) {
++                const target = this[ProxyTarget];
++                let i = 0;
++                for (const value of target) {
++                    Reflect.apply(callback, thisArg ?? this, [proxy_wrap(value), i++]);
++                }
++            },
++            includes: function (value) {
++                const target = this[ProxyTarget];
++                return target.has(proxy_unwrap(value));
++            },
++            indexOf: function (value, fromIndex) {
++                const target = this[ProxyTarget];
++                return target.find(proxy_unwrap(value), fromIndex);
++            },
++            pop: function () {
++                const target = this[ProxyTarget];
++                const result = Reflect.get(target, pop_back_name)();
++                return result == null ? result : proxy_wrap(result);
++            },
++            push: function (...values) {
++                const target = this[ProxyTarget];
++                const push = Reflect.get(target, push_back_name);
++                for (const value of values) {
++                    Reflect.apply(push, target, [proxy_unwrap(value)]);
++                }
++                return target.size();
++            },
++            toJSON: function (key = "") {
++                return [...this];
++            },
++            toString: function (index) {
++                return [...this].map((v) => v?.toString?.() ?? v).join(",");
++            },
++        };
++        const array_iterator = function* () {
++            for (let i = 0; i < this.length; ++i) {
++                yield this[i];
++            }
++        };
++        const handler = {
++            get(target, p, receiver) {
++                if (typeof p !== "string") {
++                    return p === ProxyTarget ? target : p === Symbol.iterator ? array_iterator : undefined;
++                }
++                const num = Number.parseInt(p);
++                if (!Number.isFinite(num)) {
++                    if (p === "length") {
++                        return target.size();
++                    }
++                    return array_api[p];
++                }
++                if (num < 0 || num >= target.size()) {
++                    return undefined;
++                }
++                return proxy_wrap(target.get(num));
++            },
++            getOwnPropertyDescriptor(target, p) {
++                if (typeof p !== "string") {
++                    return undefined;
++                }
++                const num = Number.parseInt(p);
++                if (!(num >= 0) || num >= target.size()) {
++                    return undefined;
++                }
++                return {
++                    configurable: true,
++                    enumerable: true,
++                    value: proxy_wrap(target.get(num)),
++                    writable: true,
++                };
++            },
++            has(target, p) {
++                if (typeof p !== "string") {
++                    return p === Symbol.iterator;
++                }
++                const num = Number.parseInt(p);
++                if (!(num >= 0)) {
++                    return p === "length" || !!array_api[p];
++                }
++                return num >= 0 && num < target.size();
++            },
++            isExtensible(target) {
++                return true;
++            },
++            ownKeys(target) {
++                const keys = [];
++                for (let i = 0; i < target.size(); i++) {
++                    keys.push(i.toString());
++                }
++                return keys;
++            },
++            preventExtensions(target) {
++                return true;
++            },
++            set(target, p, newValue, receiver) {
++                if (typeof p !== "string") {
++                    return false;
++                }
++                const num = Number.parseInt(p);
++                if (!(num >= 0) || num >= target.size()) {
++                    return false;
++                }
++                target.set(num, proxy_unwrap(newValue));
++                return true;
++            },
++            setPrototypeOf(target, v) {
++                return false;
++            },
++        };
++        type.prototype.proxy = function () {
++            return new Proxy(this, handler);
++        };
++        type.create = function (values) {
++            const arr = new type();
++            const proxy = arr.proxy();
++            Reflect.apply(proxy.push, proxy, values.map(godot_wrap));
++            return arr;
++        };
++    });
++    require("godot.typeloader").on_type_loaded("GDictionary", function (type) {
++        const helpers = get_helpers();
++        const { get_member, godot_wrap, proxy_unwrap, proxy_wrap } = helpers;
++        const ProxyTarget = helpers.ProxyTarget;
++        proxyable_prototypes.push(type.prototype);
++        type.prototype[Symbol.iterator] = function* () {
++            const keys = this.keys();
++            const arr_get_indexed = keys[get_member("get_indexed")];
++            const dict_get_keyed = this[get_member("get_keyed")];
++            for (let i = 0; i < keys.size(); ++i) {
++                const key = Reflect.apply(arr_get_indexed, keys, [i]);
++                yield { key: key, value: Reflect.apply(dict_get_keyed, this, [key]) };
++            }
++        };
++        const handler = {
++            defineProperty(target, property, attributes) {
++                return false;
++            },
++            deleteProperty(target, p) {
++                target.erase(p);
++                return true;
++            },
++            get(target, p, receiver) {
++                if (typeof p !== "string") {
++                    return p === ProxyTarget ? target : undefined;
++                }
++                const value = target.get(p);
++                return value !== null
++                    ? proxy_wrap(value)
++                    : target.has(p)
++                        ? value
++                        : p === "toString"
++                            ? Object.prototype.toString
++                            : undefined;
++            },
++            getOwnPropertyDescriptor(target, p) {
++                if (typeof p !== "string") {
++                    return undefined;
++                }
++                return {
++                    configurable: true,
++                    enumerable: true,
++                    value: proxy_wrap(target.get(p)),
++                    writable: true,
++                };
++            },
++            has(target, p) {
++                if (typeof p !== "string") {
++                    return false;
++                }
++                return target.has(p) || p === "toString";
++            },
++            isExtensible(target) {
++                return true;
++            },
++            ownKeys(target) {
++                const keys = [];
++                for (const key of target.keys()) {
++                    if (typeof key === "string") {
++                        keys.push(key);
++                    }
++                }
++                return keys;
++            },
++            preventExtensions(target) {
++                return false;
++            },
++            set(target, p, newValue, receiver) {
++                if (typeof p !== "string") {
++                    return false;
++                }
++                target.set(p, proxy_unwrap(newValue));
++                return true;
++            },
++            setPrototypeOf(target, v) {
++                return false;
++            },
++        };
++        type.prototype.proxy = function () {
++            return new Proxy(this, handler);
++        };
++        type.create = function (entries) {
++            const dict = new type();
++            const proxy = dict.proxy();
++            for (const [key, value] of Object.entries(entries)) {
++                proxy[key] = godot_wrap(value);
++            }
++            return dict;
++        };
++    });
++    require("godot.typeloader").on_type_loaded("Callable", function (type) {
++        const original_cc = type.create;
++        const custom_cc = require("godot-jsb").callable;
++        type.create = function () {
++            const argc = arguments.length;
++            if (argc == 1) {
++                if (typeof arguments[0] !== "function") {
++                    throw new Error("not a function");
++                }
++                return custom_cc(arguments[0]);
++            }
++            if (argc == 2) {
++                if (typeof arguments[1] !== "function") {
++                    return original_cc(arguments[0], arguments[1]);
++                }
++                return custom_cc(arguments[0], arguments[1]);
++            }
++            throw new Error("invalid arguments");
++        };
++    });
++    require("godot.typeloader").on_type_loaded("Signal", function (type) {
++        let { jsb, Callable, Object } = require("godot.lib.api");
++        const get_member = jsb.internal.names.get_member;
++        const notify_microtasks_run = jsb.internal.notify_microtasks_run;
++        type.prototype[get_member("as_promise")] = function () {
++            let self = this;
++            return new Promise(function (resolve, reject) {
++                let fn = Callable.create(function () {
++                    //self.disconnect(fn);
++                    if (arguments.length == 0) {
++                        resolve(undefined);
++                        return;
++                    }
++                    if (arguments.length == 1) {
++                        resolve(arguments[0]);
++                        return;
++                    }
++                    // return as javascript array if more than one
++                    resolve(Array.from(arguments));
++                    notify_microtasks_run();
++                });
++                self.connect(fn, Object.ConnectFlags.CONNECT_ONE_SHOT);
++                self = undefined;
++            });
++        };
++    });
++    (function () {
++        Object.defineProperty(require("godot"), "GLOBAL_GET", {
++            value: function (entry_path) {
++                return require("godot.lib.api").ProjectSettings.get_setting_with_override(entry_path);
++            },
++        });
++        Object.defineProperty(require("godot"), "EDITOR_GET", {
++            value: function (entry_path) {
++                return require("godot.lib.api").EditorInterface.get_editor_settings().get(entry_path);
++            },
++        });
++    })();
++});
++define("jsb.polyfill", ["require", "exports"], function (require, exports) {
++    "use strict";
++    Object.defineProperty(exports, "__esModule", { value: true });
++    // Web encoding globals missing in quickjs-ng; required by ES module packages such as effect.
++    const g = globalThis;
++    if (typeof g.TextEncoder === "undefined") {
++        g.TextEncoder = class TextEncoder {
++            get encoding() { return "utf-8"; }
++            encode(str = "") {
++                const out = [];
++                for (const ch of String(str)) {
++                    const c = ch.codePointAt(0);
++                    if (c < 0x80)
++                        out.push(c);
++                    else if (c < 0x800)
++                        out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
++                    else if (c < 0x10000)
++                        out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
++                    else
++                        out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
++                }
++                return new Uint8Array(out);
++            }
++        };
++    }
++    if (typeof g.TextDecoder === "undefined") {
++        g.TextDecoder = class TextDecoder {
++            get encoding() { return "utf-8"; }
++            decode(buf = new Uint8Array(0)) {
++                const b = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
++                let s = "";
++                for (let i = 0; i < b.length;) {
++                    const c = b[i++];
++                    let cp = c;
++                    if (c >= 0xf0)
++                        cp = ((c & 7) << 18) | ((b[i++] & 63) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
++                    else if (c >= 0xe0)
++                        cp = ((c & 15) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
++                    else if (c >= 0xc0)
++                        cp = ((c & 31) << 6) | (b[i++] & 63);
++                    s += String.fromCodePoint(cp);
++                }
++                return s;
++            }
++        };
++    }
++    // ---- EventTarget / Event / AbortSignal / AbortController (Effect.callback, interruption, timeouts) ----
++    if (typeof g.Event === "undefined") {
++        g.Event = class Event {
++            type;
++            defaultPrevented = false;
++            target = null;
++            currentTarget = null;
++            cancelable;
++            constructor(type, init) { this.type = String(type); this.cancelable = !!(init && init.cancelable); }
++            preventDefault() { if (this.cancelable)
++                this.defaultPrevented = true; }
++            stopPropagation() { }
++            stopImmediatePropagation() { this._stop = true; }
++        };
++    }
++    if (typeof g.EventTarget === "undefined") {
++        g.EventTarget = class EventTarget {
++            _listeners = new Map();
++            addEventListener(type, cb, opts) {
++                if (!cb)
++                    return;
++                const once = typeof opts === "object" && opts !== null && !!opts.once;
++                let list = this._listeners.get(type);
++                if (!list) {
++                    list = [];
++                    this._listeners.set(type, list);
++                }
++                if (list.some((l) => l.cb === cb))
++                    return;
++                list.push({ cb, once });
++                if (typeof opts === "object" && opts !== null && opts.signal) {
++                    opts.signal.addEventListener("abort", () => this.removeEventListener(type, cb), { once: true });
++                }
++            }
++            removeEventListener(type, cb) {
++                const list = this._listeners.get(type);
++                if (!list)
++                    return;
++                const i = list.findIndex((l) => l.cb === cb);
++                if (i >= 0)
++                    list.splice(i, 1);
++            }
++            dispatchEvent(ev) {
++                ev.target = this;
++                ev.currentTarget = this;
++                const handler = this["on" + ev.type];
++                if (typeof handler === "function")
++                    handler.call(this, ev);
++                for (const l of [...(this._listeners.get(ev.type) || [])]) {
++                    if (l.once)
++                        this.removeEventListener(ev.type, l.cb);
++                    if (typeof l.cb === "function")
++                        l.cb.call(this, ev);
++                    else if (l.cb && typeof l.cb.handleEvent === "function")
++                        l.cb.handleEvent(ev);
++                    if (ev._stop)
++                        break;
++                }
++                return !ev.defaultPrevented;
++            }
++        };
++    }
++    if (typeof g.DOMException === "undefined") {
++        g.DOMException = class DOMException extends Error {
++            constructor(message, name) { super(message); this.name = name || "Error"; }
++        };
++    }
++    if (typeof g.AbortSignal === "undefined") {
++        const kCreate = Symbol("create");
++        class AbortSignal extends g.EventTarget {
++            aborted = false;
++            reason = undefined;
++            onabort = null;
++            constructor(key) { super(); if (key !== kCreate)
++                throw new TypeError("Illegal constructor"); }
++            throwIfAborted() { if (this.aborted)
++                throw this.reason; }
++            _abort(reason) {
++                if (this.aborted)
++                    return;
++                this.aborted = true;
++                this.reason = reason === undefined ? new g.DOMException("This operation was aborted", "AbortError") : reason;
++                this.dispatchEvent(new g.Event("abort"));
++            }
++            static abort(reason) { const s = new AbortSignal(kCreate); s._abort(reason); return s; }
++            static timeout(ms) {
++                const s = new AbortSignal(kCreate);
++                setTimeout(() => s._abort(new g.DOMException("The operation timed out", "TimeoutError")), ms);
++                return s;
++            }
++            static any(signals) {
++                const s = new AbortSignal(kCreate);
++                for (const sig of signals) {
++                    if (sig.aborted) {
++                        s._abort(sig.reason);
++                        break;
++                    }
++                    sig.addEventListener("abort", () => s._abort(sig.reason), { once: true });
++                }
++                return s;
++            }
++        }
++        g.AbortSignal = AbortSignal;
++        g.AbortController = class AbortController {
++            signal = new AbortSignal(kCreate);
++            abort(reason) { this.signal._abort(reason); }
++        };
++    }
++    // ---- fast setImmediate ----
++    // The host timer wheel has ~10ms (or one frame) granularity, so each `setImmediate` hop (Effect's scheduler yields through it)
++    // costs a frame. Run immediates through the microtask queue instead, and fall back to a real timer once a chain has been running
++    // for ~4ms so Godot frames are never starved.
++    if (!g.__jsbFastImmediate) {
++        g.__jsbFastImmediate = true;
++        const nativeSetTimeout = g.setTimeout;
++        const now = () => (typeof g.performance !== "undefined" && g.performance.now ? g.performance.now() : Date.now());
++        let queue = [];
++        let scheduled = false;
++        let chainStart = -1;
++        const flush = () => {
++            scheduled = false;
++            const batch = queue;
++            queue = [];
++            for (const it of batch) {
++                if (!it.cancelled)
++                    it.fn(...it.args);
++            }
++            if (queue.length === 0)
++                chainStart = -1;
++        };
++        const schedule = () => {
++            if (scheduled)
++                return;
++            scheduled = true;
++            const t = now();
++            if (chainStart < 0)
++                chainStart = t;
++            if (t - chainStart > 4) {
++                chainStart = -1;
++                nativeSetTimeout(flush, 0);
++            }
++            else {
++                Promise.resolve().then(flush);
++            }
++        };
++        g.setImmediate = (fn, ...args) => {
++            const item = { fn, args, cancelled: false };
++            queue.push(item);
++            schedule();
++            return item;
++        };
++        g.clearImmediate = (item) => { if (item)
++            item.cancelled = true; };
++    }
++    // ---- Error.stack header ----
++    // quickjs-ng stacks contain only the "    at ..." frames; Node/V8 (and libraries that print `error.stack`) expect a leading "Name: message" line.
++    // Wrap the global Error constructors so errors created from JS get the header. Errors raised by the engine itself are not covered.
++    if (!g.__jsbStackHeader) {
++        g.__jsbStackHeader = true;
++        const fix = (e) => {
++            try {
++                const st = e.stack;
++                if (typeof st === "string" && !/^[A-Za-z_$][\w$]*(: |\n|$)/.test(st)) {
++                    const head = e.message ? `${e.name}: ${e.message}` : String(e.name);
++                    // drop the wrapper's own frames so the first frame is the caller
++                    const body = st.split("\n").filter((l) => !/^\s*at (construct \(native\)|Wrapped \()/.test(l)).join("\n");
++                    e.stack = head + "\n" + body;
++                }
++            }
++            catch { /* leave as is */ }
++            return e;
++        };
++        for (const name of ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"]) {
++            const Orig = g[name];
++            if (typeof Orig !== "function" || Orig.__jsbWrapped)
++                continue;
++            const Wrapped = function (...args) {
++                return fix(Reflect.construct(Orig, args, new.target || Wrapped));
++            };
++            Wrapped.prototype = Orig.prototype;
++            Object.setPrototypeOf(Wrapped, Orig);
++            Orig.prototype.constructor = Wrapped;
++            Wrapped.__jsbWrapped = true;
++            g[name] = Wrapped;
++        }
++    }
++    // ---- crypto (getRandomValues / randomUUID) ----
++    // Uses Godot's Crypto when the engine exposes it, otherwise Math.random. NOT suitable for security-sensitive randomness unless Godot's Crypto is used.
++    if (typeof g.crypto === "undefined") {
++        let godotRandomBytes = null;
++        try {
++            const godot = (typeof require === "function") ? require("godot") : null;
++            if (godot && godot.Crypto) {
++                const c = new godot.Crypto();
++                godotRandomBytes = (n) => new Uint8Array(c.generate_random_bytes(n).to_array_buffer());
++            }
++        }
++        catch { /* fall back to Math.random */ }
++        const fill = (arr) => {
++            const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
++            const src = godotRandomBytes ? godotRandomBytes(bytes.length) : null;
++            for (let i = 0; i < bytes.length; i++)
++                bytes[i] = src ? src[i] : Math.floor(Math.random() * 256);
++            return arr;
++        };
++        g.crypto = {
++            getRandomValues: fill,
++            randomUUID: () => {
++                const b = fill(new Uint8Array(16));
++                b[6] = (b[6] & 0x0f) | 0x40;
++                b[8] = (b[8] & 0x3f) | 0x80;
++                const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
++                return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
++            },
++        };
++    }
++});
++require("jsb.inject");
++require("jsb.polyfill");
++//# sourceMappingURL=jsb.runtime.bundle.js.map
+\ No newline at end of file
+diff --git a/scripts/out/jsb.runtime.bundle.js.map b/scripts/out/jsb.runtime.bundle.js.map
+new file mode 100644
+index 0000000..6f3c2eb
+--- /dev/null
++++ b/scripts/out/jsb.runtime.bundle.js.map
+@@ -0,0 +1 @@
++{"version":3,"file":"jsb.runtime.bundle.js","sourceRoot":"../src/","sources":["main.ts","godot.lib.api.ts","godot.annotations.ts","godot.typeloader.ts","jsb.core.ts","jsb.inject.ts","jsb.polyfill.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file

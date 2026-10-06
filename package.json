@@ -1,0 +1,25 @@
+{
+  "name": "create-godotjs-bun",
+  "version": "0.1.0",
+  "description": "Scaffold a GodotJS + Bun game project: TypeScript bundled by Bun, run by GodotJS inside Godot.",
+  "type": "module",
+  "bin": {
+    "create-godotjs-bun": "bin/create.ts"
+  },
+  "files": [
+    "bin",
+    "template",
+    "patches",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "keywords": ["godot", "godotjs", "bun", "typescript", "scaffold", "create"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Galz648/create-godotjs-bun.git"
+  },
+  "license": "MIT"
+}
