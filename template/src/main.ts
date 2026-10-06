@@ -1,7 +1,7 @@
 import "../polyfills/web-globals.js"; // TextEncoder, AbortController, fast setImmediate, Error.stack header (must be first)
-import { Node, ResourceLoader, Variant, type Script } from "godot";
-import { createClassBinder } from "godot.annotations";
+import { Node, ResourceLoader, type Script } from "godot";
 import { Context, Effect, Layer, Schedule, Schema } from "effect";
+import { gd } from "./lib/gd";
 import { sharedTag } from "./lib/shared";
 
 // --- a port (service) and a live implementation, a ports-and-adapters pattern ---
@@ -24,23 +24,30 @@ const program = Effect.gen(function* () {
   return "done";
 }).pipe(Effect.provide(ClockLive));
 
-const bind = createClassBinder();
-
 // GDScript's global `load` is not injected into bundled modules. Same call: ResourceLoader.load.
 function load(path: string): Script {
   return ResourceLoader.load(path) as Script;
 }
 
-@bind() // registers the class with Godot so @export and signals work
+@gd.class // registers the class with Godot so exports and signals work
 export default class GameRoot extends Node {
-  @bind.export(Variant.Type.TYPE_INT) // shows up in the inspector; the scene can override it
+  // 100 has no decimal point, so the build plugin stores an int. The scene overrides it to 42.
+  @gd.export()
   accessor health: number = 100;
+
+  @gd.export()
+  accessor tags: string[] = ["demo"];
+
+  @gd.onready("Label")
+  label!: Node;
 
   _ready(): void {
     console.log(sharedTag("GameRoot"));
     console.log(`GameRoot ready, health=${this.health}`);
-    // Instantiate through the script (`new` on the Script object). `new Node()` + `set_script()` leaves TC39 `accessor`
-    // fields uninitialised ("Cannot read from private field").
+    console.log(`GameRoot label=${String(this.label.get_name())} tags=${this.tags.join(",")}`);
+    // Instantiate through the script. `set_script` on a JS class does not run the constructor on the
+    // stock engine (accessor fields stay uninitialised). The build plugin warns if you call it.
+    // `call("new")` constructs once on the stock engine and on a patched engine.
     const spinner = load("res://src/scripts/Spinner.ts").call("new") as Node;
     this.add_child(spinner);
     Effect.runPromise(program)

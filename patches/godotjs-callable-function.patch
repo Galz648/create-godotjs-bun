@@ -1,0 +1,109 @@
+--- a/bridge/jsb_type_convert.cpp
++++ b/bridge/jsb_type_convert.cpp
+@@ -1,5 +1,6 @@
+ ﻿#include "jsb_type_convert.h"
+ #include "jsb_environment.h"
++#include "jsb_callable.h"
+ 
+ // Not ideal. Need to clean up access.
+ #include "../weaver/jsb_script_language.h"
+@@ -143,6 +144,23 @@
+         return "<unknown>";
+     }
+ 
++    // Bare function -> free JSCallable (null object id), same construction as
++    // _new_callable for Callable.create(fn). Only the Callable slot and the
++    // untyped Variant overload call this. A plain function declaration is a
++    // constructor in JS, so IsConstructor is not a rejection.
++    static bool js_function_to_callable(v8::Isolate* isolate, const v8::Local<v8::Value>& p_jval, Variant& r_cvar)
++    {
++        if (!p_jval->IsFunction())
++        {
++            return false;
++        }
++        Environment* env = Environment::wrap(isolate);
++        const v8::Local<v8::Function> js_func = p_jval.As<v8::Function>();
++        const ObjectCacheID callback_id = env->get_cached_function(js_func);
++        r_cvar = Callable(memnew(JSCallable(ObjectID(), env->id(), callback_id)));
++        return true;
++    }
++
+     // translate js val into gd variant with an expected type
+     bool TypeConvert::js_to_gd_var(v8::Isolate* isolate, const v8::Local<v8::Context>& context, const v8::Local<v8::Value>& p_jval, Variant::Type p_type, Variant& r_cvar)
+     {
+@@ -274,7 +292,6 @@
+         // misc types
+         case Variant::COLOR:
+         case Variant::RID:
+-        case Variant::CALLABLE:
+         case Variant::SIGNAL:
+         case Variant::DICTIONARY:
+             {
+@@ -294,6 +311,12 @@
+                 r_cvar = *(Variant*) pointer;
+                 return true;
+             }
++        case Variant::CALLABLE:
++            if (js_function_to_callable(isolate, p_jval, r_cvar))
++            {
++                return true;
++            }
++            goto FALLBACK_TO_VARIANT;  // NOLINT(cppcoreguidelines-avoid-goto, hicpp-avoid-goto)
+         case Variant::NIL:
+             //NOTE (instead of prompting a nil value) the type NIL usually means a Variant parameter accepted by a godot method
+             return js_to_gd_var(isolate, context, p_jval, r_cvar);
+@@ -508,10 +531,10 @@
+             r_cvar = impl::Helper::to_packed_byte_array(isolate, p_jval.As<v8::ArrayBuffer>());
+             return true;
+         }
+-        //TODO
+-        // if (p_jval->IsFunction())
+-        // {
+-        // }
++        if (js_function_to_callable(isolate, p_jval, r_cvar))
++        {
++            return true;
++        }
+ 
+         if (p_jval->IsObject())
+         {
+--- a/bridge/jsb_callable.h
++++ b/bridge/jsb_callable.h
+@@ -18,15 +18,19 @@
+             // types are already ensured by `Callable::operator==` with the comparator function pointers before calling
+             const JSCallable* js_cc_a = (const JSCallable*)p_a;
+             const JSCallable* js_cc_b = (const JSCallable*)p_b;
+-            return js_cc_a->callback_id_ == js_cc_b->callback_id_;
++            return js_cc_a->callback_id_ == js_cc_b->callback_id_
++                && js_cc_a->object_id_ == js_cc_b->object_id_;
+         }
+ 
+         static bool _compare_less(const CallableCustom* p_a, const CallableCustom* p_b)
+         {
+             const JSCallable* js_cc_a = (const JSCallable*)p_a;
+             const JSCallable* js_cc_b = (const JSCallable*)p_b;
+-            return js_cc_a->callback_id_ < js_cc_b->callback_id_;
+-            // return !_compare_equal(p_a, p_b) && p_a < p_b;
++            if (js_cc_a->callback_id_ != js_cc_b->callback_id_)
++            {
++                return js_cc_a->callback_id_ < js_cc_b->callback_id_;
++            }
++            return js_cc_a->object_id_ < js_cc_b->object_id_;
+         }
+ 
+         JSCallable(ObjectID p_object_id, jsb::EnvironmentID p_env_id, jsb::ObjectCacheID p_callback_id)
+@@ -48,7 +52,13 @@
+ 
+         virtual CompareEqualFunc get_compare_equal_func() const override { return _compare_equal; }
+         virtual CompareLessFunc get_compare_less_func() const override { return _compare_less; }
+-        virtual uint32_t hash() const override { return callback_id_.hash(); }
++        // Same mix as Callable::hash: method (here the function id) then the object id.
++        virtual uint32_t hash() const override
++        {
++            uint32_t hash = callback_id_.hash();
++            hash = hash_murmur3_one_64(object_id_, hash);
++            return hash_fmix32(hash);
++        }
+     };
+ }
+ 

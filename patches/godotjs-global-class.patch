@@ -1,0 +1,33 @@
+--- a/bridge/jsb_class_info.h
++++ b/bridge/jsb_class_info.h
+@@ -149,7 +149,9 @@
+ 
+         StringName name;
+ 
+-        //TODO class_name is needed if type is OBJECT
++        // Filled from the JS property's class_name string (scalar object exports).
++        // PROPERTY_HINT_RESOURCE_TYPE also copies hint_string into PropertyInfo.class_name.
++        // PROPERTY_HINT_NODE_TYPE does not, so this field is what Node / Node2D carry.
+         StringName class_name;
+ 
+         String hint_string;
+--- a/bridge/jsb_class_info.cpp
++++ b/bridge/jsb_class_info.cpp
+@@ -280,6 +280,17 @@
+                     {
+                         property_info.hint_string = impl::Helper::to_string(isolate, hint_string_val);
+                     }
++                    // Scalar object exports set a string class_name. Hint 17 copies hint_string
++                    // in PropertyInfo's constructor; hint 34 (Node, Node2D) uses this field.
++                    v8::Local<v8::Value> class_name_val;
++                    if (obj->Get(context, impl::Helper::new_string_ascii(isolate, "class_name")).ToLocal(&class_name_val) && class_name_val->IsString())
++                    {
++                        const String class_name_str = impl::Helper::to_string(isolate, class_name_val);
++                        if (!class_name_str.is_empty())
++                        {
++                            property_info.class_name = class_name_str;
++                        }
++                    }
+                     property_info.usage = BridgeHelper::to_enum<PropertyUsageFlags>(context, obj->Get(context, jsb_name(environment, usage)), PROPERTY_USAGE_DEFAULT) | PROPERTY_USAGE_SCRIPT_VARIABLE;
+ 
+                     v8::Local<v8::Value> cache;

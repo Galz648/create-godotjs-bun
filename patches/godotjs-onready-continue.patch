@@ -1,0 +1,50 @@
+--- a/bridge/jsb_environment.cpp
++++ b/bridge/jsb_environment.cpp
+@@ -1992,14 +1992,17 @@
+                     Node* child_node = node->get_node(node_path_str);
+                     if (!child_node)
+                     {
++                        // get_node already logged "Node not found". Assign null and keep going,
++                        // same as GDScript @implicit_ready. Do not log a second error here.
+                         self->Set(context, element_name, v8::Null(isolate)).Check();
+-                        return;
++                        continue;
+                     }
+                     v8::Local<v8::Object> child_object;
+                     if (!TypeConvert::gd_obj_to_js(isolate, context, child_node, child_object))
+                     {
+                         JSB_LOG(Error, "failed to evaluate onready value for %s", node_path_str);
+-                        return;
++                        self->Set(context, element_name, v8::Null(isolate)).Check();
++                        continue;
+                     }
+                     self->Set(context, element_name, child_object).Check();
+                 }
+@@ -2013,7 +2016,8 @@
+                         JSB_LOG(Warning, "something wrong when evaluating onready '%s'\n%s",
+                             impl::Helper::to_string(isolate, element_name),
+                             BridgeHelper::get_exception(try_catch_run));
+-                        return;
++                        self->Set(context, element_name, v8::Null(isolate)).Check();
++                        continue;
+                     }
+ 
+                     v8::Maybe<bool> assignment = result.IsEmpty()
+@@ -2024,13 +2028,15 @@
+                         JSB_LOG(Warning, "something wrong assigning onready result to '%s'\n%s",
+                             impl::Helper::to_string(isolate, element_name),
+                             BridgeHelper::get_exception(try_catch_run));
+-                        return;
++                        self->Set(context, element_name, v8::Null(isolate)).Check();
++                        continue;
+                     }
+                     if (assignment.IsNothing())
+                     {
+                         JSB_LOG(Warning, "failed to assign onready result to '%s'\n%s",
+                             impl::Helper::to_string(isolate, element_name));
+-                        return;
++                        self->Set(context, element_name, v8::Null(isolate)).Check();
++                        continue;
+                     }
+                 }
+             }

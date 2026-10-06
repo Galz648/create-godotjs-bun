@@ -3,13 +3,13 @@
 Start a [GodotJS](https://github.com/godotjs/GodotJS) game project where **Bun** bundles your TypeScript and the stock GodotJS release runs it inside Godot. No engine fork needed.
 
 ```sh
-bunx github:Galz648/create-godotjs-bun#v0.1.0 my-game --name "My Game"
+bunx github:Galz648/create-godotjs-bun#v0.3.0 my-game --name "My Game"
 cd my-game
 bun run dev:build   # terminal 1: rebuild on save
 bun run editor      # terminal 2: the Godot editor, press F5 to play
 ```
 
-`#v0.1.0` pins a release (see the tags). `bunx github:Galz648/create-godotjs-bun my-game` takes the latest default branch.
+`#v0.3.0` pins a release (see the tags). `bunx github:Galz648/create-godotjs-bun my-game` takes the latest default branch.
 
 ## What you need
 
@@ -35,6 +35,9 @@ bunx create-godotjs-bun <target-dir> [--name "Project Name"] [--godot /path/to/b
 It copies the template, names the project, runs `bun install` and the first build, and starts a git repo with a type-check pre-commit hook (`--no-git` to skip).
 
 ## What you get
+
+A build-time plugin (stock engine, no patches needed) gives you typed exports (`@gd.export() accessor speed: number = 200.0`: int vs float read from the literal), `@onready` that survives a missing path, and `signal.connect(fn)` with a plain function.
+
 
 TypeScript sources in `src/`, each file bundled by Bun to `.godot/GodotJS/<same path>.js` and attached in scenes by its `.ts` path; shared code in `src/lib/`; a hot-reload editor addon; typings; a dev runner that rebuilds and relaunches the game on save (`bun run dev`); source-mapped stack traces; and `docs/DAILY.md` with the loop, layout and gotchas. The default demo script uses [Effect](https://effect.website); pass `--no-effect` for a plain TypeScript demo instead.
 

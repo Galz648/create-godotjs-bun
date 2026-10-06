@@ -5,3 +5,5 @@
 [node name="Main" type="Node"]
 script = ExtResource("1")
 health = 42
+
+[node name="Label" type="Label" parent="."]

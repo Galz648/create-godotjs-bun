@@ -23,6 +23,8 @@ declare module "godot" {
     _ready?(): void;
     _process?(delta: number): void;
   }
+  // The editor's gen/ scene typings name child classes. Label is the demo's @onready child.
+  export class Label<T = any> extends Node {}
 }
 declare module "godot.annotations" {
   // Minimal shim; `bun run types` generates the real thing. Decorators are TC39 standard (use `accessor`), not experimentalDecorators.

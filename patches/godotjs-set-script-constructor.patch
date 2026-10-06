@@ -1,0 +1,86 @@
+--- a/bridge/jsb_environment.cpp
++++ b/bridge/jsb_environment.cpp
+@@ -1353,14 +1353,15 @@
+         v8::Local<v8::Context> context = context_.Get(isolate);
+         v8::Context::Scope context_scope(context);
+ 
+-        // Can occur at runtime if object.set_script(...) is used, or in the editor due to hot-reloading etc.
+-        if (const NativeObjectID object_id = this->try_get_object_id(p_this))
++        // Already wrapped: runtime object.set_script on a JS object. Set the script
++        // prototype first (construct does not change [[Prototype]] of a returned
++        // object), then fall through and Reflect.construct so field initialisers
++        // and the constructor body run on this wrapper. Editor reload uses
++        // Environment::rebind, not this branch, and must not re-run constructors.
++        if (const NativeObjectID existing_id = this->try_get_object_id(p_this))
+         {
+-            JSB_LOG(Verbose, "crossbinding on previously bound object %d (addr:%d), rebind it to script class %d", object_id, (uintptr_t) p_this, p_class_id);
+-
+-            //TODO may not work in this way
++            JSB_LOG(Verbose, "crossbinding on previously bound object %d (addr:%d), construct script class %d on the existing wrapper", existing_id, (uintptr_t) p_this, p_class_id);
+             _rebind(isolate, context, p_this, p_class_id);
+-            return object_id;
+         }
+ 
+         StringName js_class_name;
+--- a/bridge/jsb_transpiler.h
++++ b/bridge/jsb_transpiler.h
+@@ -319,8 +319,20 @@
+             v8::Local<v8::Value> bind_object_value;
+             if (new_target->Get(context, jsb_symbol(environment, ConstructorBindObject)).ToLocal(&bind_object_value) && bind_object_value->IsExternal())
+             {
++                Object* gd_object = (Object*) bind_object_value.As<v8::External>()->Value();
++                v8::Local<v8::Object> existing;
++                // set_script on an object that already has a wrapper. Return that
++                // wrapper so the derived constructor installs fields on it. Do not
++                // bind_godot_object: a second bind bumps the refcount and adds
++                // another object-db entry, and it can reconstruct a shadow instance.
++                if (environment->try_get_object(gd_object, existing))
++                {
++                    JSB_LOG(Verbose, "returning existing JS wrapper for native object. %s(%d)", class_name, class_id);
++                    info.GetReturnValue().Set(existing);
++                    return;
++                }
+                 JSB_LOG(Verbose, "binding to JS instance to existing native object. %s(%d)", class_name, class_id);
+-                environment->bind_godot_object(class_id, (Object*) bind_object_value.As<v8::External>()->Value(), self);
++                environment->bind_godot_object(class_id, gd_object, self);
+                 return;
+             }
+ 
+--- a/impl/quickjs/jsb_quickjs_class.h
++++ b/impl/quickjs/jsb_quickjs_class.h
+@@ -121,6 +121,18 @@
+                 return JS_EXCEPTION;
+             }
+ 
++            // A constructor callback may return an existing object (set_script on
++            // an already-bound wrapper). quickjs-ng then uses that object as
++            // `this` for the rest of the derived constructor. Free the temporary
++            // this_val; its last stack ref drops with this HandleScope, and the
++            // class finalizer releases the internal-data slot.
++            const JSValue ret = (JSValue) info.GetReturnValue();
++            if (JS_IsObject(ret))
++            {
++                const JSValue overridden = JS_DupValue(ctx, ret);
++                JS_FreeValue(ctx, this_val);
++                return overridden;
++            }
+             return this_val;
+         }
+ 
+--- a/impl/jsc/jsb_jsc_class.h
++++ b/impl/jsc/jsb_jsc_class.h
+@@ -119,6 +119,14 @@
+                 return nullptr;
+             }
+ 
++            // Same return-override as the quickjs shim. The temporary this_val
++            // stays only on the stack; dropping that protect lets the instance
++            // finalizer release its InternalData. JSC has no immediate free.
++            const JSValueRef ret = (JSValueRef) info.GetReturnValue();
++            if (ret && JSValueIsObject(ctx, ret))
++            {
++                return (JSObjectRef) ret;
++            }
+             return this_val;
+         }
+ 

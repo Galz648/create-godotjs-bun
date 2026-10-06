@@ -1,19 +1,22 @@
-import { Node, Variant, type Signal } from "godot";
-import { createClassBinder } from "godot.annotations";
+import { Node, type Signal } from "godot";
+import { gd } from "../lib/gd";
 import { sharedTag } from "../lib/shared";
 
-const bind = createClassBinder();
-
-@bind()
+@gd.class
 export default class Spinner extends Node {
-  @bind.export(Variant.Type.TYPE_FLOAT)
-  accessor speed = 1.5;
+  // 1.5 has a decimal point, so the build plugin stores a float (type 3).
+  @gd.export()
+  accessor speed: number = 1.5;
 
-  @bind.signal()
+  @gd.signal()
   accessor spun!: Signal<(amount: number) => void>;
 
   _ready(): void {
     console.log(sharedTag("Spinner"));
     console.log(`Spinner ready, speed=${this.speed}, spun=${this.has_signal("spun")}`);
+    this.spun.connect((amount) => {
+      console.log(`Spinner spun amount=${amount}`);
+    });
+    this.spun.emit(1);
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "create-godotjs-bun",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Scaffold a GodotJS + Bun game project: TypeScript bundled by Bun, run by GodotJS inside Godot.",
   "type": "module",
   "bin": {
@@ -12,7 +12,8 @@
     "variants",
     "patches",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "bun": ">=1.1.0"
