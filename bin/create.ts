@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 // create-godotjs-bun: scaffold a GodotJS + Bun game project.
-//   bunx create-godotjs-bun my-game [--name "My Game"] [--godot /path/to/binary] [--no-install] [--no-git]
+//   bunx create-godotjs-bun my-game [--name "My Game"] [--godot /path/to/binary] [--no-effect] [--no-install] [--no-git]
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { resolveGodot } from "../template/tools/config.ts";
 
 const templateDir = join(import.meta.dir, "..", "template");
 const version = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")).version as string;
-const USAGE = 'usage: bunx create-godotjs-bun <target-dir> [--name "Project Name"] [--godot /path/to/binary] [--no-install] [--no-git]';
+const USAGE = 'usage: bunx create-godotjs-bun <target-dir> [--name "Project Name"] [--godot /path/to/binary] [--no-effect] [--no-install] [--no-git]';
 
 function fail(message: string): never {
   console.error(`error: ${message}`);
@@ -41,6 +41,7 @@ const takeSwitch = (flag: string): boolean => {
 };
 const name = takeFlag("--name");
 const godotFlag = takeFlag("--godot");
+const noEffect = takeSwitch("--no-effect");
 const noInstall = takeSwitch("--no-install");
 const noGit = takeSwitch("--no-git");
 if (argv.length !== 1 || argv[0].startsWith("-") || name === "" || godotFlag === "") fail(USAGE);
@@ -71,6 +72,24 @@ const walk = (dir: string): void => {
   }
 };
 walk(templateDir);
+
+// --- --no-effect: overlay the Effect-free demo and drop the dependency (and the lockfile that pins it) ---
+if (noEffect) {
+  const overlay = join(import.meta.dir, "..", "variants", "no-effect");
+  const apply = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const from = join(dir, entry.name);
+      if (entry.isDirectory()) apply(from);
+      else copyFileSync(from, join(target, relative(overlay, from)));
+    }
+  };
+  apply(overlay);
+  rmSync(join(target, "bun.lock"), { force: true });
+  const tp = JSON.parse(readFileSync(join(target, "package.json"), "utf8"));
+  delete tp.dependencies?.effect;
+  if (tp.dependencies && Object.keys(tp.dependencies).length === 0) delete tp.dependencies;
+  writeFileSync(join(target, "package.json"), `${JSON.stringify(tp, null, 2)}\n`);
+}
 
 // --- name the project ---
 const projectPath = join(target, "project.godot");
