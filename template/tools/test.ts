@@ -42,7 +42,7 @@ writeFileSync(
 import "../../polyfills/web-globals.js";
 import { Node } from "godot";
 import { runAll } from "../../tools/test-kit";
-${files.map((f) => `import "../../${f}";`).join("\n")}
+${files.map((f) => `import "../../${f.replaceAll("\\", "/")}";`).join("\n")}
 export default class TestRunner extends Node {
   _ready(): void {
     runAll((line) => console.log(line), this).then((code) => this.get_tree().quit(code));
