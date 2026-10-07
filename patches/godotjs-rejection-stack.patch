@@ -1,0 +1,34 @@
+diff --git a/bridge/jsb_environment.cpp b/bridge/jsb_environment.cpp
+index e121efa..35680fa 100644
+--- a/bridge/jsb_environment.cpp
++++ b/bridge/jsb_environment.cpp
+@@ -245,7 +245,28 @@ namespace jsb
+             const v8::Local<v8::Promise> promise = message.GetPromise();
+             v8::Isolate* isolate = promise->GetIsolate();
+ 
+-            const String str = impl::Helper::to_string_without_side_effect(isolate, message.GetValue());
++            // an Error reason carries a stack: print it (mapped through the source maps like every other
++            // script error) instead of only `Error: message`. Other values are printed as a string.
++            const v8::Local<v8::Value> reason = message.GetValue();
++            String str;
++            if (!reason.IsEmpty() && reason->IsObject())
++            {
++                const v8::Local<v8::Context> context = isolate->GetCurrentContext();
++                v8::Local<v8::Value> stack_val;
++                if (reason.As<v8::Object>()->Get(context, impl::Helper::new_string_ascii(isolate, "stack")).ToLocal(&stack_val)
++                    && stack_val->IsString())
++                {
++                    str = impl::Helper::to_string(isolate, stack_val);
++                    if (!str.is_empty())
++                    {
++                        str = Environment::wrap(isolate)->get_source_map_cache().process_source_position(str, nullptr);
++                    }
++                }
++            }
++            if (str.is_empty())
++            {
++                str = impl::Helper::to_string_without_side_effect(isolate, reason);
++            }
+             JSB_LOG(Error, "unhandled promise rejection: %s", str);
+         }
+     }

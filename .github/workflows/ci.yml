@@ -1,0 +1,82 @@
+# Scaffolds a game from THIS checkout on macOS, Linux and Windows with the upstream GodotJS editor build
+# (QuickJS-ng, Godot 4.6.1), then builds, type-checks, runs it headless and runs the game's own tests.
+# What it proves per OS: the scaffold works, the build plugin and Bun bundling work, the engine loads the bundle and the demo
+# prints its readiness lines, the logic tests and the engine tests pass. It does NOT export or run an exported game
+# (needs export templates; see docs/SHIPPING.md in the scaffolded game).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GODOTJS_REPO: ialex32x/GodotJS
+  GODOTJS_TAG: v1.1.0.beta1-4.6.1
+
+jobs:
+  scaffold:
+    name: ${{ matrix.os }} ${{ matrix.flavour }}
+    runs-on: ${{ matrix.os }}
+    # Windows is the first real evidence we get: the editor exe is a GUI-subsystem binary, so piping its output may not work.
+    # A failure there is information (read the log), not a verdict, until it has passed once.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        flavour: [effect, no-effect]
+        include:
+          - os: macos-latest
+            asset: macos-editor-4.6.1-qjs-ng.zip
+            bin: godot.macos.editor.universal
+          - os: ubuntu-latest
+            asset: linux-editor-4.6.1-qjs-ng.zip
+            bin: godot.linuxbsd.editor.x86_64
+          - os: windows-latest
+            asset: windows-editor-4.6.1-qjs-ng.zip
+            bin: godot.windows.editor.x86_64.exe
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Download the upstream GodotJS editor build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/godotjs/bin"
+          gh release download "$GODOTJS_TAG" --repo "$GODOTJS_REPO" --pattern "${{ matrix.asset }}" --dir "$RUNNER_TEMP/godotjs"
+          unzip -q "$RUNNER_TEMP/godotjs/${{ matrix.asset }}" -d "$RUNNER_TEMP/godotjs/bin"
+          find "$RUNNER_TEMP/godotjs/bin" -maxdepth 2 -type f | head -20
+          BIN=$(find "$RUNNER_TEMP/godotjs/bin" -type f -name "${{ matrix.bin }}" | head -1)
+          test -n "$BIN" || { echo "editor binary ${{ matrix.bin }} not found in the archive"; exit 1; }
+          chmod +x "$BIN"
+          echo "GODOTJS=$BIN" >> "$GITHUB_ENV"
+      - name: Scaffold a game from this checkout
+        run: |
+          FLAGS=""
+          if [ "${{ matrix.flavour }}" = "no-effect" ]; then FLAGS="--no-effect"; fi
+          bun bin/create.ts "$RUNNER_TEMP/ci-game" --name "CI Game" --godot "$GODOTJS" $FLAGS --no-git
+      - name: Type-check
+        working-directory: ${{ runner.temp }}/ci-game
+        run: bun run typecheck
+      - name: Build
+        working-directory: ${{ runner.temp }}/ci-game
+        run: bun run build
+      - name: Run headless (the demo must print its readiness lines)
+        working-directory: ${{ runner.temp }}/ci-game
+        run: |
+          bun run headless 2>&1 | tee "$RUNNER_TEMP/headless.log"
+          grep -q "GameRoot ready, health=" "$RUNNER_TEMP/headless.log"
+          grep -q "Spinner ready, speed=" "$RUNNER_TEMP/headless.log"
+          ! grep -E "^(ERROR|SCRIPT ERROR)" "$RUNNER_TEMP/headless.log"
+      - name: Logic tests
+        working-directory: ${{ runner.temp }}/ci-game
+        run: bun run test
+      - name: Engine tests
+        working-directory: ${{ runner.temp }}/ci-game
+        run: bun run test:engine

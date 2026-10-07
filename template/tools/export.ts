@@ -3,6 +3,8 @@
 //   bun run export:macos --expect "text"        # the debug-build log must contain this text
 //   bun run export:macos --no-smoke             # only build + export + the pack check (no app is run)
 //   bun run export:macos --frames 600           # frames the debug-build run lasts (default 300)
+//   bun run export:macos --no-zip               # skip the jam archive step (dist/<Name>-macos.zip)
+// After the checks pass, the app is ad-hoc signed and zipped with a player README into dist/, and the checks run again FROM the zip.
 // What each check shows and does NOT show: docs/SHIPPING.md, section "What the export check proves".
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -22,12 +24,13 @@ const value = (name: string): string | undefined => {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
 };
-for (const a of argv) if (a.startsWith("--") && !["--expect", "--frames", "--no-smoke"].includes(a)) die(`unknown option ${a}\nusage: bun run export:macos [--expect "text"] [--frames N] [--no-smoke]`);
+for (const a of argv) if (a.startsWith("--") && !["--expect", "--frames", "--no-smoke", "--no-zip"].includes(a)) die(`unknown option ${a}\nusage: bun run export:macos [--expect "text"] [--frames N] [--no-smoke] [--no-zip]`);
 const expectText = value("--expect");
 if (flag("--expect") && !expectText) die("--expect needs a text argument");
 const frames = Number(value("--frames") ?? 300);
 if (!Number.isInteger(frames) || frames < 1) die("--frames needs a positive integer");
 const smoke = !flag("--no-smoke");
+const zipStep = !flag("--no-zip");
 
 function die(message: string): never {
   console.error(`\nEXPORT FAIL: ${message}`);
@@ -42,7 +45,7 @@ function record(name: string, ok: boolean, detail: string): boolean {
   return ok;
 }
 const step = (n: number, total: number, text: string) => console.log(`\n[${n}/${total}] ${text}`);
-const TOTAL = smoke ? 7 : 5;
+const TOTAL = (smoke ? 7 : 5) + (zipStep ? 1 : 0);
 
 function run(cmd: string, args: string[], opts: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {}) {
   const r = spawnSync(cmd, args, { cwd: opts.cwd ?? ROOT, encoding: "utf8", env: { ...process.env, ...opts.env }, timeout: opts.timeoutMs, maxBuffer: 64 * 1024 * 1024 });
@@ -159,10 +162,42 @@ step(5, TOTAL, "check what is inside the exported pack");
     if (!inPack) problems.push(`${r} has no ${want} in the pack`);
     else if (!existsSync(onDisk) || statSync(onDisk).size !== inPack.size) problems.push(`${want} in the pack (${inPack.size} B) differs from the build output`);
   }
-  const leaked = [...paths.keys()].filter((p) => /^(tools|typings|docs|tests|bun|node_modules|out|\.vscode|\.githooks)\//.test(p) || /^(README\.md|bun\.lock|tsconfig\.json|package\.json|\.env.*)$/.test(p));
+  const leaked = [...paths.keys()].filter((p) => /^(tools|typings|docs|tests|bun|node_modules|out|dist|\.vscode|\.githooks)\//.test(p) || /^(README\.md|bun\.lock|tsconfig\.json|package\.json|\.env.*)$/.test(p));
   if (leaked.length) problems.push(`tooling files in the pack: ${leaked.slice(0, 5).join(", ")}${leaked.length > 5 ? ", ..." : ""}`);
   if (!paths.has("project.binary")) problems.push("no project.binary");
   record("bundle in pack", remaps.length > 0 && problems.length === 0, remaps.length === 0 ? "no .ts scripts found in the pack (the loader needs src/**/*.ts)" : problems.length ? problems.join("; ") : `${remaps.length} script(s), every compiled .js present and byte-identical to the build output; no tooling files; ${entries.length} files total`);
+}
+
+// Run a release .app headless with the smoke probe. Works on a COPY inside `work` (an override.cfg is added to the copy, the
+// original is never touched) and records one check. `work` is a fresh mkdtemp directory made by the caller.
+function probeRun(checkName: string, sourceApp: string, work: string): boolean {
+  const exe = readdirNames(join(sourceApp, "Contents/MacOS")).find((n) => n !== "override.cfg") ?? "";
+  const copy = join(work, "app.app");
+  const cp = run("cp", ["-R", sourceApp, copy]);
+  if (cp.status !== 0) die(`could not copy the app for the probe run: ${cp.output}`);
+  const probe = join(work, "probe.gd");
+  copyFileSync(join(import.meta.dir, "smoke/probe.gd"), probe);
+  writeFileSync(join(copy, "Contents/MacOS/override.cfg"), `[autoload]\n\nGodotJSSmokeProbe="*${probe}"\n`);
+  const reportPath = join(work, "report.json");
+  const r = run(join(copy, "Contents/MacOS", exe), ["--headless", "--quit-after", "600"], { env: { GODOTJS_SMOKE_OUT: reportPath }, timeoutMs: 60_000 });
+  const lines = r.output.split("\n").filter((l) => /^(ERROR|SCRIPT ERROR|WARNING)|\[jsb\]\[(Error|Warning)\]/.test(l));
+  let report: Record<string, unknown> | undefined;
+  try {
+    report = JSON.parse(readFileSync(reportPath, "utf8"));
+  } catch {
+    /* no report: the app never reached the probe */
+  }
+  const nJs = Array.isArray(report?.js_script_nodes) ? (report.js_script_nodes as string[]).length : 0;
+  const bad = Array.isArray(report?.js_scripts_not_instantiable) ? (report.js_scripts_not_instantiable as string[]) : [];
+  const hasTs = results.find((x) => x.name === "bundle in pack")?.ok === true;
+  const detail = report
+    ? `exit ${r.status}, ${report.frames} frames, main scene ${report.main_scene_loaded ? `loaded (${report.main_scene})` : "NOT loaded"}, ${nJs} live .ts script node(s), ${report.node_count} nodes, release build: ${report.debug_build === false}`
+    : `exit ${r.status}${r.timedOut ? " (timed out after 60 s)" : ""}, the probe never reported`;
+  const ok = r.status === 0 && !!report && report.main_scene_loaded === true && bad.length === 0 && report.debug_build === false && lines.length === 0;
+  record(checkName, ok, detail + (bad.length ? `; scripts that cannot instantiate: ${bad.join(", ")}` : "") + (lines.length ? `; engine printed: ${lines.slice(0, 3).join(" | ")}` : ""));
+  if (ok && nJs === 0 && hasTs) console.log("  note: the pack has .ts scripts but none was attached to a node 15 frames after start (fine if your game attaches them later)");
+  if (!ok) console.log(r.output.split("\n").slice(-15).join("\n"));
+  return ok;
 }
 
 if (smoke) {
@@ -170,31 +205,7 @@ if (smoke) {
   step(6, TOTAL, "run the release app headless with the smoke probe");
   const work = mkdtempSync(join(tmpdir(), "godotjs-smoke-"));
   try {
-    const copy = join(work, "app.app");
-    const cp = run("cp", ["-R", appPath, copy]);
-    if (cp.status !== 0) die(`could not copy the app for the probe run: ${cp.output}`);
-    const probe = join(work, "probe.gd");
-    copyFileSync(join(import.meta.dir, "smoke/probe.gd"), probe);
-    writeFileSync(join(copy, "Contents/MacOS/override.cfg"), `[autoload]\n\nGodotJSSmokeProbe="*${probe}"\n`);
-    const reportPath = join(work, "report.json");
-    const r = run(join(copy, "Contents/MacOS", exeName), ["--headless", "--quit-after", "600"], { env: { GODOTJS_SMOKE_OUT: reportPath }, timeoutMs: 60_000 });
-    const lines = r.output.split("\n").filter((l) => /^(ERROR|SCRIPT ERROR|WARNING)|\[jsb\]\[(Error|Warning)\]/.test(l));
-    let report: Record<string, unknown> | undefined;
-    try {
-      report = JSON.parse(readFileSync(reportPath, "utf8"));
-    } catch {
-      /* no report: the app never reached the probe */
-    }
-    const nJs = Array.isArray(report?.js_script_nodes) ? (report.js_script_nodes as string[]).length : 0;
-    const bad = Array.isArray(report?.js_scripts_not_instantiable) ? (report.js_scripts_not_instantiable as string[]) : [];
-    const hasTs = results.find((x) => x.name === "bundle in pack")?.ok === true;
-    const detail = report
-      ? `exit ${r.status}, ${report.frames} frames, main scene ${report.main_scene_loaded ? `loaded (${report.main_scene})` : "NOT loaded"}, ${nJs} live .ts script node(s), ${report.node_count} nodes, release build: ${report.debug_build === false}`
-      : `exit ${r.status}${r.timedOut ? " (timed out after 60 s)" : ""}, the probe never reported`;
-    const ok = r.status === 0 && !!report && report.main_scene_loaded === true && bad.length === 0 && report.debug_build === false && lines.length === 0;
-    record("release app runs the game", ok, detail + (bad.length ? `; scripts that cannot instantiate: ${bad.join(", ")}` : "") + (lines.length ? `; engine printed: ${lines.slice(0, 3).join(" | ")}` : ""));
-    if (ok && nJs === 0 && hasTs) console.log("  note: the pack has .ts scripts but none was attached to a node 15 frames after start (fine if your game attaches them later)");
-    if (!ok) console.log(r.output.split("\n").slice(-15).join("\n"));
+    probeRun("release app runs the game", appPath, work);
   } finally {
     // work is a fresh mkdtemp directory created above: only that is removed
     if (work.startsWith(tmpdir()) && work.includes("godotjs-smoke-")) rmSync(work, { recursive: true, force: true });
@@ -229,9 +240,103 @@ if (smoke) {
   }
 }
 
+// 8. jam archive: ad-hoc sign a staged copy, zip it with the player README, then verify FROM the zip
+if (zipStep) {
+  step(TOTAL, TOTAL, `jam archive -> dist/${appName}-macos.zip (ad-hoc signed, checked from the zip)`);
+  if (!results.every((r) => r.ok)) {
+    console.log("  skipped: a check above failed, no archive is made from a failing build");
+  } else {
+    const distDir = join(ROOT, "dist");
+    const zipPath = join(distDir, `${appName}-macos.zip`);
+    const stage = mkdtempSync(join(tmpdir(), "godotjs-zip-"));
+    try {
+      mkdirSync(distDir, { recursive: true });
+      writeFileSync(join(distDir, ".gdignore"), ""); // keep the editor from scanning the archive
+      const packDir = join(stage, "pack");
+      mkdirSync(packDir);
+      const stagedApp = join(packDir, `${appName}.app`);
+      const dc = run("ditto", [appPath, stagedApp]);
+      if (dc.status !== 0) die(`could not stage the app: ${dc.output}`);
+      const sign = run("codesign", ["--force", "--deep", "-s", "-", stagedApp]);
+      if (sign.status !== 0) {
+        record("ad-hoc signature", false, `codesign failed (exit ${sign.status}): ${sign.output.trim().slice(0, 300)}`);
+      } else {
+        writeFileSync(join(packDir, "README-macos.txt"), playerReadme(appName));
+        rmSync(zipPath, { force: true }); // a previous archive of THIS project, inside dist/
+        const z = run("ditto", ["-c", "-k", "--norsrc", "--noextattr", "--noqtn", "--noacl", packDir, zipPath]);
+        if (z.status !== 0 || !existsSync(zipPath)) die(`ditto could not make the archive: ${z.output}`);
+        console.log(`  ${zipPath}  (${sizeMB(statSync(zipPath).size)} MB)`);
+        // verify from a fresh directory, the way a player's Mac extracts it
+        const fresh = join(stage, "fresh");
+        mkdirSync(fresh);
+        const x = run("ditto", ["-x", "-k", zipPath, fresh]);
+        const exApp = join(fresh, `${appName}.app`);
+        record(
+          "archive content",
+          x.status === 0 && existsSync(exApp) && existsSync(join(fresh, "README-macos.txt")),
+          x.status === 0 ? `${appName}.app and README-macos.txt extracted with ditto -x -k` : `ditto -x -k failed: ${x.output.trim()}`,
+        );
+        const v = run("codesign", ["--verify", "--deep", "--strict", exApp]);
+        const d = run("codesign", ["-dv", exApp]).output;
+        const adhoc = /Signature=adhoc/.test(d) && /Sealed Resources version=\d+ rules=\d+ files=\d+/.test(d);
+        record("signature from the zip", v.status === 0 && adhoc, v.status === 0 ? `verifies (--deep --strict); ${adhoc ? "Signature=adhoc, resources sealed" : "NOT adhoc with sealed resources"}` : `codesign --verify failed: ${v.output.trim().slice(0, 200)}`);
+        // negative control: a tampered copy of the same extracted app must NOT verify
+        const tampered = join(fresh, "tampered.app");
+        run("ditto", [exApp, tampered]);
+        const tpck = join(tampered, "Contents/Resources", `${appName}.pck`);
+        if (existsSync(tpck)) writeFileSync(tpck, Buffer.concat([readFileSync(tpck), Buffer.from("x")]));
+        const vb = run("codesign", ["--verify", "--deep", "--strict", tampered]);
+        record(
+          "control: tampered archive copy is rejected",
+          existsSync(tpck) && vb.status !== 0,
+          existsSync(tpck) && vb.status !== 0 ? "codesign --verify fails after one byte was appended to the pack (the signature check can fail)" : "codesign still verified a modified pack, or the pack was not found: the signature check proves nothing",
+        );
+        rmSync(tampered, { recursive: true, force: true });
+        if (smoke) {
+          const work3 = mkdtempSync(join(tmpdir(), "godotjs-smoke-"));
+          try {
+            probeRun("app from the zip runs the game", exApp, work3);
+          } finally {
+            if (work3.startsWith(tmpdir()) && work3.includes("godotjs-smoke-")) rmSync(work3, { recursive: true, force: true });
+          }
+        }
+      }
+    } finally {
+      if (stage.startsWith(tmpdir()) && stage.includes("godotjs-zip-")) rmSync(stage, { recursive: true, force: true });
+    }
+  }
+}
+
+function playerReadme(name: string): string {
+  return `${name} for macOS
+${"=".repeat(name.length + 10)}
+
+This game is not signed with an Apple Developer ID and is not notarized. macOS will refuse to open it
+the first time and say it cannot be verified. That is expected; it is safe to open if you got this file
+from the person who made the game. Do this once:
+
+  1. Unzip the file (double-click it in Finder). Move ${name}.app anywhere, for example to Applications.
+  2. Double-click ${name}.app. macOS shows a warning and does not open it. Click Done (or OK).
+  3. Open System Settings > Privacy & Security, scroll down to the message about "${name}",
+     click Open Anyway, and confirm with your password. (On macOS 14 and older you can instead
+     right-click the app, choose Open, then Open.)
+  4. From now on it opens normally.
+
+If you prefer the Terminal, one command does the same thing:
+
+  xattr -dr com.apple.quarantine /path/to/${name}.app
+
+What to expect
+  - Works on Apple Silicon (M1 and later) and on Intel Macs (one universal app).
+  - The first start can take a few seconds.
+  - If the app does not open at all, tell the author your macOS version and whether the Mac is Intel or Apple Silicon.
+`;
+}
+
 const allOk = results.every((r) => r.ok);
 console.log(`\n${allOk ? "EXPORT PASS" : "EXPORT FAIL"}  ${appPath}`);
 for (const r of results) console.log(`  ${r.ok ? "PASS" : "FAIL"}  ${r.name}`);
 if (!smoke) console.log("  (--no-smoke: the app was NOT run; only the pack contents were checked)");
-if (allOk) console.log("  unsigned and not notarized: see docs/SHIPPING.md before giving it to anyone");
+if (allOk && zipStep) console.log(`  ad-hoc signed archive: dist/${appName}-macos.zip (not notarized: players follow README-macos.txt; see docs/SHIPPING.md)`);
+else if (allOk) console.log("  unsigned and not notarized: see docs/SHIPPING.md before giving it to anyone");
 process.exit(allOk ? 0 : 1);

@@ -6,10 +6,29 @@ on the machine that wrote this page is marked **UNVERIFIED**. No Apple Developer
 all of section 3 is UNVERIFIED as a procedure (the commands are Apple's and Godot's documented ones; the
 GodotJS-specific entitlement reasoning is inference and is labelled).
 
+## 0. Game jam checklist (no Apple Developer account; design notes: `docs/design/jam-shipping.md` in the repo)
+
+`bun run export:macos` ends with `dist/<Name>-macos.zip`: the app ad-hoc signed (`codesign --force --deep -s -`) plus `README-macos.txt` for players,
+then re-checks everything FROM the zip (`ditto -x -k` in a fresh directory, `codesign --verify --deep --strict`, the release app headless with the probe,
+and a control: a one-byte-tampered copy must fail verification). `--no-zip` skips it.
+
+- [ ] **Freeze the toolchain** at the start: no engine, template, Effect or `bun.lock` changes during the jam (`bun install --frozen-lockfile`); note the engine version and template tag you exported with.
+- [ ] **Export early and on every platform you promise**, on day one with the empty game, then again after each big change. Do not find out on the last evening that the build does not start on a clean machine.
+- [ ] Set `application/bundle_identifier` (macOS) and a game name (`config/name` in `project.godot`; it names the app and the zip).
+- [ ] macOS: `bun run export:macos` prints `EXPORT PASS`; open the `.app` from the unzipped archive by hand (window, input, audio, save/load).
+- [ ] Windows (second): section 5; test on a real Windows machine (checklist there) before you upload.
+- [ ] **itch.io upload** (5 lines): create a project, kind of project "Downloadable"; upload `dist/<Name>-macos.zip` (and the Windows zip) with the platform tags set (macOS / Windows);
+  paste the Gatekeeper note below into the page description; set the version in `application/version`; test by downloading the file from itch with a browser on a second Mac (the browser adds the quarantine flag);
+  optional: `butler push dist/<Name>-macos.zip you/game:macos` does the same from the command line.
+- [ ] **Gatekeeper note for the page** (players of an ad-hoc signed app need it): "macOS: unzip, double-click the app, click Done on the warning, then System Settings > Privacy & Security > Open Anyway (macOS 15 and later; before that: right-click > Open). Or in Terminal: `xattr -dr com.apple.quarantine <path to the .app>`."
+- [ ] **Player crash logs:** the starter turns on `debug/file_logging/enable_file_logging`, so a release build writes `user://logs/godot.log` (macOS: `~/Library/Application Support/Godot/app_userdata/<Name>/logs/`; Windows: `%APPDATA%\\Godot\\app_userdata\\<Name>\\logs\\`). Ask players who report a grey screen or a crash for that file; script errors and stack positions are in it. Keep it on for the jam.
+- [ ] The pack contains source maps (`.godot/GodotJS/**/*.js.map`, about 10x the size of the bundle); that is fine for a jam, and they make crash stacks readable.
+
 ## 1. Export for macOS
 
 ```sh
-bun run export:macos                       # build + export + 3 checks, prints EXPORT PASS or EXPORT FAIL
+bun run export:macos                       # build + export + 3 checks + the jam archive (dist/), prints EXPORT PASS or EXPORT FAIL
+bun run export:macos --no-zip              # no archive step
 bun run export:macos --expect "game ready" # the debug-build log must contain this text
 bun run export:macos --no-smoke            # build + export + pack check only; the app is NOT run
 bun run export:macos --frames 600          # how long the debug-build run lasts (default 300 frames)
@@ -68,6 +87,10 @@ Notes on honesty:
 - `--no-smoke` runs nothing. Its `EXPORT PASS` means only "the pack looks right".
 - Not checked at all: that the app opens a window and renders on a real machine, audio, input, controller support.
   Open `out/<name>.app` yourself before you ship.
+- A release build prints no JS console, so to measure something inside the shipped app, have the game WRITE its numbers to a file
+  (`FileAccess.open(OS.get_environment("MY_PROBE_OUT"), FileAccess.ModeFlags.WRITE)`) and run the exported executable with that
+  variable set. `starter/tests/effect-time/export-run.sh` does this with a timer probe (release app, headless): timers and
+  `Effect.sleep` behave as in the editor build, about 10% late (`docs/design/effect-time.md`, row 8). Repo-only (needs a starter checkout).
 
 ## 2. What an unsigned app looks like to a player
 
@@ -201,6 +224,24 @@ Asset list from `gh release view v1.1.0.beta1-4.6.1 -R godotjs/GodotJS --json as
 
 Missing: Windows arm64, Linux arm64, and a true Linux export template (see above). Nothing in the starter has a preset for these platforms,
 because none was run; the recipe below is what was done and checked from a Mac.
+
+### Windows from a Mac with the installed-template route (exported and inspected; NOT run)
+
+The starter's `export_presets.cfg` has a `Windows Desktop` preset (`custom_template/*` empty = use installed templates, `embed_pck=false`, no rcedit).
+Install the two `qjs-ng` assets (`windows-template_release-4.6.1-qjs-ng.zip`, `windows-template_debug-4.6.1-qjs-ng.zip`, about 32 and 37 MB zipped) by
+copying, into `~/Library/Application Support/Godot/export_templates/4.6.1.stable/` (next to `macos.zip`, same `version.txt`), with these names:
+
+| asset file | install as |
+|---|---|
+| `godot.windows.template_release.x86_64.exe` | `windows_release_x86_64.exe` |
+| `godot.windows.template_release.x86_64.console.exe` | `windows_release_x86_64_console.exe` |
+| `godot.windows.template_debug.x86_64.exe` | `windows_debug_x86_64.exe` |
+| `godot.windows.template_debug.x86_64.console.exe` | `windows_debug_x86_64_console.exe` |
+
+Then `godot --headless --path . --export-release "Windows Desktop" out/windows/Game.exe` gives `Game.exe` (83.4 MB) and `Game.pck` (a debug export also gives `Game.console.exe`).
+Zip both files (and, to be safe for the D3D12 renderer, `D3D12Core.dll` and `d3d12SDKLayers.dll` from the asset; the export does not copy them). Check the pack with
+`bun -e 'import {readPck} from "./tools/pck.ts"; console.log(readPck("out/windows/Game.pck").entries.map(e=>e.path))'`.
+Details and the unverified list: `docs/design/jam-shipping.md`.
 
 ### Recipe: export for Windows or Linux with a custom template (exported and inspected; NOT run)
 Godot's export presets accept `custom_template/debug` and `custom_template/release` (absolute paths), so the templates need not be installed in the

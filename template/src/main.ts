@@ -1,8 +1,13 @@
 import "../polyfills/web-globals.js"; // TextEncoder, AbortController, fast setImmediate, Error.stack header (must be first)
 import { Node, ResourceLoader, type Script } from "godot";
-import { Context, Effect, Layer, Schedule, Schema } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { devState } from "./lib/dev-state";
 import { gd } from "./lib/gd";
+import { hotReload } from "./lib/hot-reload";
 import { sharedTag } from "./lib/shared";
 
 // --- a port (service) and a live implementation, a ports-and-adapters pattern ---
@@ -54,10 +59,17 @@ export default class GameRoot extends Node {
     // `call("new")` constructs once on the stock engine and on a patched engine.
     const spinner = load("res://src/scripts/Spinner.ts").call("new") as Node;
     this.add_child(spinner);
+    hotReload(); // dev only (`bun run dev`): swap edited script classes in this running game. See DAILY.md.
     devState("demo", { save: () => ({ ticks: this.ticks }), load: (s) => { this.ticks = s.ticks; } });
-    setInterval(() => console.log(`demo ticks=${++this.ticks}`), 1000);
+    // Call through a method: a closure keeps the code it was created with, a method on the prototype is swapped by hot reload.
+    setInterval(() => this.tick(), 1000);
     Effect.runPromise(program)
       .then((r) => console.log(`program finished: ${r}`))
       .catch((e) => console.log(`program failed: ${e}`));
+  }
+
+  // Edit this text while `bun run dev` runs: hot reload swaps it live and the counter keeps going.
+  tick(): void {
+    console.log(`demo ticks=${++this.ticks}`);
   }
 }

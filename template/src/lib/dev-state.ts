@@ -18,9 +18,10 @@ export type DevStateOptions<T> = {
   shape?: boolean;
 };
 
+import { fits, shapeOf, type Shape } from "./shape";
+
 type Entry = { version: number; shape: Shape; data: unknown };
 type Registration = { version: number; checkShape: boolean; save: () => unknown; load: (state: any) => void };
-type Shape = null | "number" | "string" | "boolean" | { arr: Shape } | { obj: { [key: string]: Shape } };
 
 const POLL_MS = 100;
 const READ = 1;
@@ -37,10 +38,22 @@ const engine = require("godot") as {
 };
 
 const dir = readDir();
-const registered = new Map<string, Registration>();
-let saved: Map<string, Entry> | undefined; // what the previous process left, read once, entries consumed on use
-let lastToken = "";
-let timer: ReturnType<typeof setInterval> | undefined;
+
+// One registry per process, not per copy of this file: every script bundle inlines its own copy of the library, and
+// copies that each kept their own map and timer overwrote each other's state.json (docs/design/devstate-two-bundles.md).
+// The registry's field set is a contract between copies, so the Symbol key carries a layout tag: a copy with a
+// different layout (a toolchain update in one bundle only, which one build cannot produce) gets its own registry
+// instead of reading fields that are not there. Change the tag when you change Registry.
+type Registry = {
+  registered: Map<string, Registration>;
+  saved: Map<string, Entry> | undefined; // what the previous process left, read once, entries consumed on use
+  lastToken: string;
+  timer: ReturnType<typeof setInterval> | undefined;
+};
+const REGISTRY_KEY = Symbol.for("godotjs.dev-state.v1");
+const g = globalThis as unknown as Record<symbol, Registry | undefined>;
+const reg0: Registry = (g[REGISTRY_KEY] ??= { registered: new Map(), saved: undefined, lastToken: "", timer: undefined });
+const registered = reg0.registered;
 
 function readDir(): string {
   try {
@@ -71,35 +84,9 @@ function writeText(path: string, text: string): boolean {
   return true;
 }
 
-function shapeOf(value: unknown): Shape {
-  if (typeof value === "number") return "number";
-  if (typeof value === "string") return "string";
-  if (typeof value === "boolean") return "boolean";
-  if (Array.isArray(value)) return { arr: value.length > 0 ? shapeOf(value[0]) : null };
-  if (value !== null && typeof value === "object") {
-    const obj: { [key: string]: Shape } = {};
-    for (const key of Object.keys(value)) {
-      const v = (value as Record<string, unknown>)[key];
-      if (v !== undefined) obj[key] = shapeOf(v);
-    }
-    return { obj };
-  }
-  return null; // null, undefined: unknown, matches anything
-}
-
-/** null (an empty array, a null value) is a wildcard: it carries no shape to compare. */
-function fits(a: Shape, b: Shape): boolean {
-  if (a === null || b === null) return true;
-  if (typeof a === "string" || typeof b === "string") return a === b;
-  if ("arr" in a || "arr" in b) return "arr" in a && "arr" in b && fits(a.arr, b.arr);
-  const ka = Object.keys(a.obj).sort();
-  const kb = Object.keys(b.obj).sort();
-  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && fits(a.obj[k], b.obj[k]));
-}
-
 function loadSaved(): Map<string, Entry> {
-  if (saved) return saved;
-  saved = new Map();
+  if (reg0.saved) return reg0.saved;
+  const saved = (reg0.saved = new Map<string, Entry>());
   const text = readText(`${dir}/state.json`);
   if (text === undefined) return saved;
   try {
@@ -129,8 +116,8 @@ function snapshot(token: string): string {
 // The runner writes <dir>/request containing a token. Answer by writing <dir>/state.json carrying the same token.
 function poll(): void {
   const token = (readText(`${dir}/request`) ?? "").trim();
-  if (token === "" || token === lastToken) return;
-  lastToken = token;
+  if (token === "" || token === reg0.lastToken) return;
+  reg0.lastToken = token;
   if (!writeText(`${dir}/state.json`, snapshot(token))) say("could not write the state file");
 }
 
@@ -147,11 +134,11 @@ export function devState<T>(name: string, options: DevStateOptions<T>): boolean 
     load: options.load,
   };
   registered.set(name, reg);
-  if (timer === undefined) timer = setInterval(poll, POLL_MS);
+  if (reg0.timer === undefined) reg0.timer = setInterval(poll, POLL_MS);
 
   const entry = loadSaved().get(name);
   if (!entry) return false;
-  saved?.delete(name);
+  reg0.saved?.delete(name);
   if (entry.version !== reg.version) {
     say(`discarded "${name}": saved by version ${String(entry.version)}, now version ${reg.version}`);
     return false;

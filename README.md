@@ -22,12 +22,12 @@ bun run editor      # terminal 2: the Godot editor, press F5 to play
   bun tools/config.ts show
   ```
 
-  Or pass it when you scaffold: `--godot /path/to/binary` (written to the project's `.env`), or export `GODOTJS`. Resolution order: `GODOTJS` in the shell or the project's `.env`, then the global config.
+  Or export `GODOTJS` in the shell (CI). Resolution order: `GODOTJS` in the shell, then the global config. `--godot /path/to/binary` at scaffold time writes nothing into the project: it prints how to use that binary, and with `--save-config` it saves it as the global config.
 
 ## Options
 
 ```
-bunx create-godotjs-bun <target-dir> [--name "Project Name"] [--godot /path/to/binary] [--no-effect] [--no-install] [--no-git]
+bunx create-godotjs-bun <target-dir> [--name "Project Name"] [--godot /path/to/binary [--save-config]] [--no-effect] [--no-install] [--no-git]
 ```
 
 `--no-effect` starts without [Effect](https://effect.website): a plain demo script and no `effect` dependency (a much smaller bundle).
@@ -40,6 +40,10 @@ A build-time plugin (stock engine, no patches needed) gives you typed exports (`
 
 
 TypeScript sources in `src/`, each file bundled by Bun to `.godot/GodotJS/<same path>.js` and attached in scenes by its `.ts` path; shared code in `src/lib/`; a hot-reload editor addon; typings; a dev runner that rebuilds and relaunches the game on save (`bun run dev`); source-mapped stack traces; and `docs/DAILY.md` with the loop, layout and gotchas. The default demo script uses [Effect](https://effect.website); pass `--no-effect` for a plain TypeScript demo instead.
+
+## Update the toolchain of an existing project
+
+Projects hold the build tooling as plain files. `tools/toolchain.json` (written at scaffold time) records a hash of each one, and `bun tools/update.ts <path-to-template> [--dry-run] [--force] [--adopt]` copies a newer template's toolchain files (`tools/**`, `src/lib/gd.ts`, `src/lib/dev-state.ts`, `polyfills/`, `.githooks/`, `.vscode/`) into the project. Files you edited are left alone with a diff and exit code 3; game code, scenes, `project.godot` and `package.json` are never touched. Details in the project's `docs/DAILY.md`.
 
 ## Ship it
 

@@ -1,0 +1,5 @@
+{
+  "_comment": "The ONE list of toolchain-owned files: update.ts copies these from a template, create-godotjs-bun stamps them. Everything not matched here (src/** game code, project.godot, scenes, package.json, export_presets.cfg, docs) belongs to the game and is never touched.",
+  "include": ["tools/**", "src/lib/gd.ts", "src/lib/dev-state.ts", "src/lib/hot-reload.ts", "src/lib/hot.ts", "src/lib/shape.ts", "polyfills/**", ".githooks/*", ".vscode/*"],
+  "exclude": ["tools/toolchain.json", "tools/check-engine.ts", "**/*.uid", "**/.godot/**", "**/node_modules/**"]
+}

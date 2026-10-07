@@ -1,6 +1,21 @@
 // Type-aware text edits. The checker reads declared types; the bytes Bun compiles stay TypeScript.
+import { basename } from "node:path";
+import { engineKind, importedEngineClass } from "./engine-classes.ts";
 import ts from "typescript";
+import { abortProblem } from "./abort-checks.ts";
+import { badConversion, lostWrite, packedProblems, stringProblems } from "./value-checks.ts";
+import { withRewrites, type PluginRewrites } from "./options.ts";
 import { applyEdits, toTransformMap, type Edit, type Part, type TransformMap } from "./sourcemap.ts";
+import {
+  earlyOnreadyReads,
+  isEngineMethod,
+  isScriptClass,
+  isSignalExpression,
+  rejectNonCallable,
+  scriptClassProblem,
+  thisUsingFunction,
+} from "./diagnostics.ts";
+import { declaredByEngine, decoratorPath, fail, hasModifier, isAnyOrError, isCallableInstance, loc, resolveAlias } from "./ts-utils.ts";
 
 const TYPE_BOOL = 1;
 const TYPE_INT = 2;
@@ -30,20 +45,6 @@ type Kind =
   | { kind: "resource"; name: string }
   | { kind: "node"; name: string };
 
-function loc(node: ts.Node): string {
-  const sf = node.getSourceFile();
-  const pos = sf.getLineAndCharacterOfPosition(node.getStart());
-  return `${sf.fileName}:${pos.line + 1}:${pos.character + 1}`;
-}
-
-function fail(node: ts.Node, message: string): never {
-  throw new Error(`${loc(node)} ${message}`);
-}
-
-function isAnyOrError(type: ts.Type): boolean {
-  return (type.flags & ts.TypeFlags.Any) !== 0 || (type as { intrinsicName?: string }).intrinsicName === "error";
-}
-
 function gen(text: string, at: number): Part {
   return { text, at };
 }
@@ -57,6 +58,8 @@ export interface TransformOptions {
   gdModule?: string;
   /** Scene knowledge for `@onready("Path")` validation (see scenes.ts). Absent: no scene check. */
   scenes?: { checkOnready(scriptFile: string, path: string, fieldType: string | null): string[] };
+  /** Per-rewrite switches, all on by default (options.ts, ADR 0009). A switch that is off leaves that construct as written. */
+  rewrites?: Partial<PluginRewrites>;
 }
 
 export function transformSourceFile(
@@ -65,6 +68,7 @@ export function transformSourceFile(
   options: TransformOptions = {},
 ): TransformResult | null {
   const source = sf.getFullText();
+  const rw = withRewrites(options.rewrites);
   const edits: Edit[] = [];
   const warnings: string[] = [];
   let needCallable = false;
@@ -97,6 +101,17 @@ export function transformSourceFile(
     if (isTwoArgCallableCreate(node, callableLocal)) {
       const fn = node.arguments[1];
       if (ts.isStringLiteral(fn) || ts.isNoSubstitutionTemplateLiteral(fn)) return;
+      if (!rw.connect) {
+        // Off: the author writes the wrapper. Only a function argument is a problem (the stock engine rejects it).
+        if (isFunctionLike(fn, checker)) {
+          fail(
+            fn,
+            "Callable.create(owner, fn) with a function is rewritten by the `connect` rewrite, which is switched off. " +
+              'Write the explicit form: `import { callableWithOwner } from "godotjs-tooling/callable"` and `callableWithOwner(owner, fn)`.',
+          );
+        }
+        return;
+      }
       if (!isFunctionLike(fn, checker)) {
         fail(
           fn,
@@ -129,14 +144,19 @@ export function transformSourceFile(
         hint.hint === undefined
           ? ""
           : `, { hint: ${hint.hint}, hint_string: ${JSON.stringify(hint.hintString)} }`;
-      replace(node.getStart(), node.getEnd(), [
-        gen(`${head}(${hint.type}${options})`, node.getStart()),
-      ]);
+      const explicit = `${head}(${hint.type}${options})`;
+      if (!rw.exports) {
+        fail(
+          node,
+          `export.${exportKind}() is rewritten by the \`exports\` rewrite, which is switched off, and the engine's binder has no .${exportKind}(). Write the explicit form: \`${explicit}\`.`,
+        );
+      }
+      replace(node.getStart(), node.getEnd(), [gen(explicit, node.getStart())]);
       return;
     }
 
     if (isBareGdExport(node)) {
-      rewriteBareExport(node, sf, checker, replace);
+      rewriteBareExport(node, sf, checker, replace, rw.exports);
       return;
     }
 
@@ -146,6 +166,17 @@ export function transformSourceFile(
     if (!arg || isCallableFactory(arg)) return;
     if (!isFunctionLike(arg, checker)) {
       if (isEngineMethod(node, checker)) rejectNonCallable(arg, node, checker);
+      return;
+    }
+    if (!rw.connect) {
+      if (isEngineMethod(node, checker)) {
+        const method = (node.expression as ts.PropertyAccessExpression).name.text;
+        fail(
+          arg,
+          `${method}() was given a function, which the stock engine does not accept (or compares wrongly). The \`connect\` rewrite that wraps it is switched off. ` +
+            `Write the explicit form: \`${method}(Callable.create(...))\` (import Callable from "godot"), or Callable.create(owner, "method_name") for a named method.`,
+        );
+      }
       return;
     }
     if (isEngineMethod(node, checker)) {
@@ -171,6 +202,14 @@ export function transformSourceFile(
     considerRegistration(node);
     const fields = onreadyFields(node);
     if (fields.length === 0) return;
+    if (!rw.onready) {
+      const first = fields[0];
+      fail(
+        first.decorator,
+        `@onready is rewritten by the \`onready\` rewrite, which is switched off, and the runtime decorator throws. Write the explicit form: ` +
+          `a \`_ready(): void { this.${first.name} = this.get_node(...) as T; super._ready?.(); }\` and drop the decorator (docs/PLUGIN-REWRITES.md has the exact text the plugin generates).`,
+      );
+    }
     for (const read of earlyOnreadyReads(node, fields.map((f) => f.name))) {
       warnings.push(
         `${loc(read)} \`${read.getText()}\` is an @onready field. It is assigned at the start of _ready, so this read in a field initializer or the constructor sees undefined.`,
@@ -222,7 +261,8 @@ export function transformSourceFile(
       if (hasModifier(member, ts.SyntaxKind.AccessorKeyword)) signalFields.push(member);
       else nearMisses.push(member);
     }
-    if (members.length === 0 && signalFields.length === 0 && nearMisses.length === 0) return;
+    const storable = !rw.stored ? [] : storableAccessors(node, members, checker);
+    if (members.length === 0 && signalFields.length === 0 && nearMisses.length === 0 && storable.length === 0) return;
     const script = isScriptClass(node, checker);
     if (!script) {
       const first = members[0];
@@ -255,11 +295,39 @@ export function transformSourceFile(
           `Write \`accessor ${memberLabel(field)}!: Signal<...>\` to declare it. A Signal-typed field with an initializer is left alone.`,
       );
     }
-    if (members.length === 0 && signalFields.length === 0) return;
+    if (!rw.register) {
+      // Off: the author writes @gd.signal() and @gd.class. Without them the engine gets an unregistered class.
+      for (const field of signalFields) {
+        fail(
+          field,
+          `\`${memberLabel(field)}\` is a Signal-typed accessor with no decorator. Declaring it is done by the \`register\` rewrite, which is switched off. ` +
+            `Write the explicit form: \`@${gdName}.signal() accessor ${memberLabel(field)}!: Signal<...>\`.`,
+        );
+      }
+      if (members.length > 0 && !hasClassDecorator(node, gdName)) {
+        fail(
+          members[0].decorator,
+          `class ${node.name?.text ?? "(anonymous)"} has @${gdName} member decorators but no @${gdName}.class. Adding it is done by the \`register\` rewrite, which is switched off. ` +
+            `Write the explicit form: \`@${gdName}.class\` above the class.`,
+        );
+      }
+    }
+    if (members.length === 0 && signalFields.length === 0 && storable.length === 0) return;
     const ref = gdRef();
     for (const field of signalFields) {
       replace(field.getStart(), field.getStart(), [gen(`@${ref}.signal() `, field.getStart())]);
     }
+    // Plain instance accessors (internal state) keep their value across an editor reload. Innermost
+    // position: after the member's last decorator, so a decorator above (bind.cache()) sees the replaced set.
+    const owner = node.name?.text ?? basename(sf.fileName).replace(/\.[^.]+$/, "");
+    for (const field of storable) {
+      const decorators = ts.getDecorators(field) ?? [];
+      const last = decorators[decorators.length - 1];
+      const key = JSON.stringify(`${owner}.${memberLabel(field)}`);
+      if (last) replace(last.getEnd(), last.getEnd(), [gen(` @${ref}.stored(${key})`, last.getEnd())]);
+      else replace(field.getStart(), field.getStart(), [gen(`@${ref}.stored(${key}) `, field.getStart())]);
+    }
+    if (members.length === 0 && signalFields.length === 0) return;
     if (!hasClassDecorator(node, gdName)) {
       const at = node.getStart();
       replace(at, at, [gen(`@${ref}.class `, at)]);
@@ -267,12 +335,23 @@ export function transformSourceFile(
   };
 
   const considerExpression = (node: ts.Node) => {
-    const copied = mutatedCopy(node, checker);
-    if (copied) {
-      warnings.push(
-        `${loc(copied.target)} \`${copied.target.getText()}\` changes a temporary copy: reading \`${copied.inner.getText()}\` from the engine returns a new ${copied.typeName}, ` +
-          `so this assignment is lost. Assign the whole value (\`${copied.inner.getText()} = new ${copied.typeName}(...)\`) or modify a local and assign it back.`,
-      );
+    if (rw.abortGuards) {
+      const abort = abortProblem(node, checker);
+      if (abort) fail(node, `ENGINE ABORT (engine ticket ${abort.ticket}): ${abort.message} Switch: abortGuards (docs/PLUGIN-REWRITES.md).`);
+    }
+    if (rw.badConversions) {
+      const bad = badConversion(node, checker);
+      if (bad) fail(bad.node, `WRONG VALUE (engine ticket ${bad.ticket}): ${bad.message} Switch: badConversions (docs/PLUGIN-REWRITES.md).`);
+    }
+    if (rw.lostWrites) {
+      const lost = lostWrite(node, checker);
+      if (lost) warnings.push(`${loc(lost.node)} ${lost.message} (engine ticket ${lost.ticket}; switch lostWrites)`);
+    }
+    if (rw.valueStrings) {
+      for (const p of stringProblems(node, checker)) warnings.push(`${loc(p.node)} ${p.message} (engine ticket ${p.ticket}; switch valueStrings)`);
+    }
+    if (rw.packedIteration) {
+      for (const p of packedProblems(node, checker)) warnings.push(`${loc(p.node)} ${p.message} (engine ticket ${p.ticket}; switch packedIteration)`);
     }
     if (ts.isAwaitExpression(node) && isSignalExpression(node.expression, checker)) {
       warnings.push(
@@ -315,10 +394,6 @@ export function transformSourceFile(
   return { map: toTransformMap(source, applied.text, applied.ranges), warnings };
 }
 
-function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
-  return ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind);
-}
-
 function memberLabel(member: ts.ClassElement): string {
   return member.name ? member.name.getText() : "(unnamed)";
 }
@@ -347,19 +422,6 @@ function usesGdIdentifier(sf: ts.SourceFile): boolean {
   };
   visit(sf);
   return found;
-}
-
-// `@gd.export.int()` -> { root: "gd", names: ["export", "int"] }
-function decoratorPath(decorator: ts.Decorator): { root: string; names: string[] } | null {
-  let expr: ts.Expression = decorator.expression;
-  if (ts.isCallExpression(expr)) expr = expr.expression;
-  const names: string[] = [];
-  while (ts.isPropertyAccessExpression(expr)) {
-    names.unshift(expr.name.text);
-    expr = expr.expression;
-  }
-  if (!ts.isIdentifier(expr)) return null;
-  return { root: expr.text, names };
 }
 
 interface GdMember {
@@ -396,177 +458,24 @@ function isSignalTyped(member: ts.PropertyDeclaration, checker: ts.TypeChecker):
   return symbol.getName() === "Signal" && (symbol.declarations ?? []).some((d) => d.getSourceFile().isDeclarationFile);
 }
 
-function isDefaultExported(node: ts.ClassLikeDeclaration): boolean {
-  if (!ts.isClassDeclaration(node)) return false;
-  if (hasModifier(node, ts.SyntaxKind.ExportKeyword) && hasModifier(node, ts.SyntaxKind.DefaultKeyword)) return true;
-  const name = node.name?.text;
-  if (!name) return false;
-  for (const stmt of node.getSourceFile().statements) {
-    if (ts.isExportAssignment(stmt) && !stmt.isExportEquals && ts.isIdentifier(stmt.expression) && stmt.expression.text === name) {
-      return true;
-    }
-    if (ts.isExportDeclaration(stmt) && !stmt.moduleSpecifier && stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
-      for (const el of stmt.exportClause.elements) {
-        if (el.name.text === "default" && (el.propertyName?.text ?? el.name.text) === name) return true;
-      }
-    }
-  }
-  return false;
-}
-
-// True when the class (or an ancestor in the project) extends a class declared in a .d.ts, which is how
-// the engine's classes arrive.
-function extendsGodotClass(node: ts.ClassLikeDeclaration, checker: ts.TypeChecker): boolean {
-  const seen = new Set<ts.Node>();
-  const visit = (cls: ts.ClassLikeDeclaration): boolean => {
-    if (seen.has(cls)) return false;
-    seen.add(cls);
-    for (const clause of cls.heritageClauses ?? []) {
-      if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
-      for (const heritage of clause.types) {
-        const raw = checker.getSymbolAtLocation(heritage.expression) ?? checker.getTypeAtLocation(heritage).getSymbol();
-        if (!raw) continue;
-        const base = resolveAlias(raw, checker);
-        for (const decl of base.declarations ?? []) {
-          if (decl.getSourceFile().isDeclarationFile) return true;
-          if (ts.isClassLike(decl) && visit(decl)) return true;
-        }
-      }
-    }
-    return false;
-  };
-  return visit(node);
-}
-
-function isScriptClass(node: ts.ClassLikeDeclaration, checker: ts.TypeChecker): boolean {
-  return isDefaultExported(node) && extendsGodotClass(node, checker);
-}
-
-function scriptClassProblem(node: ts.ClassLikeDeclaration, checker: ts.TypeChecker): string {
-  const problems: string[] = [];
-  if (!isDefaultExported(node)) problems.push("which is not the default export of its file");
-  if (!extendsGodotClass(node, checker)) problems.push("which does not extend a Godot class");
-  return problems.join(" and ");
-}
-
-// True when the called method is declared by the engine's typings (Object.connect, Signal.connect, ...),
-// so a user class with its own `connect` is not judged.
-function isEngineMethod(call: ts.CallExpression, checker: ts.TypeChecker): boolean {
-  if (!ts.isPropertyAccessExpression(call.expression)) return false;
-  const symbol = checker.getSymbolAtLocation(call.expression.name);
-  return (symbol?.declarations ?? []).some((d) => d.getSourceFile().isDeclarationFile);
-}
-
-function rejectNonCallable(arg: ts.Expression, call: ts.CallExpression, checker: ts.TypeChecker): void {
-  const type = checker.getTypeAtLocation(arg);
-  if (isCallableInstance(type)) return;
-  if (type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Never | ts.TypeFlags.Unknown | ts.TypeFlags.Void)) return;
-  if (type.isUnion() && type.types.some((part) => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined))) return;
-  const method = (call.expression as ts.PropertyAccessExpression).name.text;
-  const what =
-    type.getConstructSignatures().length > 0
-      ? `the class \`${arg.getText()}\``
-      : `\`${arg.getText()}\` (type ${checker.typeToString(type)})`;
-  fail(
-    arg,
-    `${method}() takes a function or a Callable, not ${what}. ` +
-      "Pass an arrow function, a function, or Callable.create(...); to connect a method write `(...args) => this.method(...args)`.",
-  );
-}
-
-// True when a plain function or method passed as a callback uses `this` (an arrow is not judged).
-function thisUsingFunction(arg: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (ts.isArrowFunction(arg)) return false;
-  let fn: ts.Node | undefined;
-  if (ts.isFunctionExpression(arg)) fn = arg;
-  else if (ts.isIdentifier(arg) || ts.isPropertyAccessExpression(arg)) {
-    const decl = checker.getSymbolAtLocation(ts.isIdentifier(arg) ? arg : arg.name)?.valueDeclaration;
-    if (decl && (ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl))) {
-      fn = decl;
-    }
-    // A method reached through `this.` or another instance. A variable or arrow property is not judged.
-  }
-  if (!fn || !ts.isFunctionLike(fn) || !("body" in fn) || !fn.body) return false;
-  let found = false;
-  const visit = (node: ts.Node) => {
-    if (found) return;
-    if (node.kind === ts.SyntaxKind.ThisKeyword) {
-      found = true;
-      return;
-    }
-    // A nested function or class has its own `this`. An arrow shares this one.
-    if (ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isClassLike(node) || ts.isMethodDeclaration(node)) return;
-    ts.forEachChild(node, visit);
-  };
-  visit(fn.body as ts.Node);
-  return found;
-}
-
-// `this.label` read in a field initializer or the constructor, where an @onready field is still unset.
-function earlyOnreadyReads(node: ts.ClassLikeDeclaration, names: string[]): ts.PropertyAccessExpression[] {
-  const reads: ts.PropertyAccessExpression[] = [];
-  const set = new Set(names);
-  const visit = (n: ts.Node) => {
-    // Code that runs later (a function, an arrow, a method) is fine.
-    if (ts.isFunctionLike(n) || ts.isClassLike(n)) return;
-    if (ts.isPropertyAccessExpression(n) && n.expression.kind === ts.SyntaxKind.ThisKeyword && set.has(n.name.text)) {
-      const parent = n.parent;
-      const isWrite =
-        ts.isBinaryExpression(parent) && parent.left === n && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
-      if (!isWrite) reads.push(n);
-    }
-    ts.forEachChild(n, visit);
-  };
+// Instance accessors that nothing else claims: no export/signal/onready decorator (gd or bind) and not
+// Signal-typed. `@bind.export` stays raw on purpose: it is the unprotected API, and the tooling does not
+// rewrite what the author wrote with it.
+function storableAccessors(node: ts.ClassLikeDeclaration, gdMembers: GdMember[], checker: ts.TypeChecker): ts.PropertyDeclaration[] {
+  const found: ts.PropertyDeclaration[] = [];
   for (const member of node.members) {
-    if (ts.isPropertyDeclaration(member) && !hasModifier(member, ts.SyntaxKind.StaticKeyword) && member.initializer) {
-      visit(member.initializer);
-    } else if (ts.isConstructorDeclaration(member) && member.body) {
-      member.body.statements.forEach(visit);
-    }
+    if (!ts.isPropertyDeclaration(member) || !hasModifier(member, ts.SyntaxKind.AccessorKeyword)) continue;
+    if (hasModifier(member, ts.SyntaxKind.StaticKeyword) || hasModifier(member, ts.SyntaxKind.DeclareKeyword)) continue;
+    if (!ts.isIdentifier(member.name) && !ts.isStringLiteral(member.name)) continue;
+    if (gdMembers.some((m) => m.member === member) || isSignalTyped(member, checker)) continue;
+    const decorators = ts.getDecorators(member) ?? [];
+    const claimed = decorators.some((d) => {
+      const path = decoratorPath(d);
+      return !path || path.names.some((n) => n === "export" || n === "signal" || n === "onready" || n === "stored");
+    });
+    if (!claimed) found.push(member);
   }
-  return reads;
-}
-
-const VALUE_TYPES = new Set([
-  "Vector2", "Vector2i", "Vector3", "Vector3i", "Vector4", "Vector4i", "Color", "Rect2", "Rect2i",
-  "Transform2D", "Transform3D", "Basis", "Quaternion", "Plane", "AABB", "Projection",
-]);
-
-function declaredByEngine(symbol: ts.Symbol | undefined): boolean {
-  return (symbol?.declarations ?? []).some((d) => d.getSourceFile().isDeclarationFile);
-}
-
-// `node.position.x = 5`: the engine hands out a fresh Vector2 for `position`, so the write is lost.
-function mutatedCopy(
-  node: ts.Node,
-  checker: ts.TypeChecker,
-): { target: ts.PropertyAccessExpression; inner: ts.PropertyAccessExpression | ts.CallExpression; typeName: string } | null {
-  let target: ts.Expression | undefined;
-  if (ts.isBinaryExpression(node)) {
-    const k = node.operatorToken.kind;
-    if (k >= ts.SyntaxKind.FirstAssignment && k <= ts.SyntaxKind.LastAssignment) target = node.left;
-  } else if (
-    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-    (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-  ) {
-    target = node.operand;
-  }
-  if (!target || !ts.isPropertyAccessExpression(target)) return null;
-  const inner = target.expression;
-  let engineSymbol: ts.Symbol | undefined;
-  if (ts.isPropertyAccessExpression(inner)) engineSymbol = checker.getSymbolAtLocation(inner.name);
-  else if (ts.isCallExpression(inner) && ts.isPropertyAccessExpression(inner.expression)) {
-    engineSymbol = checker.getSymbolAtLocation(inner.expression.name);
-  } else return null;
-  if (!declaredByEngine(engineSymbol)) return null;
-  const typeSymbol = checker.getTypeAtLocation(inner).getSymbol();
-  if (!typeSymbol || !VALUE_TYPES.has(typeSymbol.getName()) || !declaredByEngine(typeSymbol)) return null;
-  return { target, inner, typeName: typeSymbol.getName() };
-}
-
-function isSignalExpression(expr: ts.Expression, checker: ts.TypeChecker): boolean {
-  const symbol = checker.getTypeAtLocation(expr).getSymbol();
-  return symbol?.getName() === "Signal" && declaredByEngine(symbol);
+  return found;
 }
 
 function identityMap(source: string): TransformMap {
@@ -709,11 +618,6 @@ function isFunctionLike(node: ts.Expression, checker: ts.TypeChecker): boolean {
   return false;
 }
 
-function isCallableInstance(type: ts.Type): boolean {
-  if (type.isUnion()) return type.types.some((part) => isCallableInstance(part));
-  return type.getSymbol()?.getName() === "Callable";
-}
-
 function hintFor(
   method: "array" | "object",
   kind: Kind,
@@ -786,11 +690,6 @@ function failNode(symbol: ts.Symbol): never {
   throw new Error("default-exported class has no name.");
 }
 
-function resolveAlias(symbol: ts.Symbol, checker: ts.TypeChecker): ts.Symbol {
-  if (symbol.flags & ts.SymbolFlags.Alias) return checker.getAliasedSymbol(symbol);
-  return symbol;
-}
-
 function classifySymbol(symbol: ts.Symbol | undefined, at: ts.Node, checker: ts.TypeChecker): Kind {
   if (!symbol) fail(at, "cannot resolve this export type. Name a concrete class.");
   symbol = resolveAlias(symbol, checker);
@@ -843,6 +742,7 @@ function rewriteBareExport(
   _sf: ts.SourceFile,
   checker: ts.TypeChecker,
   replace: (start: number, end: number, parts: Part[]) => void,
+  rewrite: boolean,
 ) {
   const decorator = node.parent;
   if (!decorator || !ts.isDecorator(decorator) || decorator.parent == null || !ts.isPropertyDeclaration(decorator.parent)) {
@@ -856,10 +756,20 @@ function rewriteBareExport(
   const spec = exportSpecFromType(type, prop, checker);
   const callee = node.expression as ts.PropertyAccessExpression;
   const head = prop.getSourceFile().text.slice(callee.getStart(), callee.getEnd());
+  // Trailing owner tag "<Class>.<field>": the runtime keys the accessor's stored slot with it.
+  const cls = prop.parent;
+  const owner = (ts.isClassLike(cls) ? cls.name?.text : undefined) ?? basename(prop.getSourceFile().fileName).replace(/\.[^.]+$/, "");
+  const tag = JSON.stringify(`${owner}.${memberLabel(prop)}`);
   const args =
     spec.hint === undefined
-      ? String(spec.type)
-      : `${spec.type}, { hint: ${spec.hint}, hint_string: ${JSON.stringify(spec.hintString)} }`;
+      ? `${spec.type}, undefined, undefined, ${tag}`
+      : `${spec.type}, { hint: ${spec.hint}, hint_string: ${JSON.stringify(spec.hintString)} }, undefined, ${tag}`;
+  if (!rewrite) {
+    fail(
+      node,
+      `@gd.export() is rewritten by the \`exports\` rewrite, which is switched off, and the runtime decorator throws on a bare call. Write the explicit form: \`@${head}(${args})\`.`,
+    );
+  }
   replace(node.getStart(), node.getEnd(), [gen(`${head}(${args})`, node.getStart())]);
 }
 
@@ -869,6 +779,8 @@ function exportSpecFromType(
   checker: ts.TypeChecker,
 ): { type: number; hint?: number; hintString: string } {
   const nonNull = unwrapNull(type);
+  // TypeScript models `boolean` as the union `true | false`, so it has to be recognised before the union check.
+  if (isBooleanType(nonNull)) return { type: TYPE_BOOL, hintString: "" };
   if (nonNull.isUnion()) {
     fail(prop, "@gd.export() cannot yet split a union. Use one type, or null.");
   }
@@ -910,7 +822,18 @@ function exportSpecFromType(
     return { type: literal === "int" ? TYPE_INT : TYPE_FLOAT, hintString: "" };
   }
   if (isAnyOrError(nonNull)) {
-    fail(prop, "@gd.export() type is any or unresolved. Annotate a concrete type.");
+    // An engine class the stand-in typings do not declare (PackedScene, Texture2D, ...): classify it by the generated hierarchy.
+    const written = prop.type && ts.isUnionTypeNode(prop.type) ? prop.type.types.find((t) => !ts.isLiteralTypeNode(t)) : prop.type;
+    const name = written && ts.isTypeReferenceNode(written) ? importedEngineClass(written.typeName, checker) : null;
+    const kind = name ? engineKind(name) : undefined;
+    if (name && kind === "resource") return { type: TYPE_OBJECT, hint: HINT_RESOURCE, hintString: name };
+    if (name && kind === "node") return { type: TYPE_OBJECT, hint: HINT_NODE, hintString: name };
+    fail(
+      prop,
+      name
+        ? `@gd.export() cannot classify \`${name}\`: run \`bun run types\` so the plugin knows whether it is a Node or a Resource.`
+        : "@gd.export() type is any or unresolved. Annotate a concrete type.",
+    );
   }
   const enumHint = enumHintString(nonNull);
   if (enumHint) return { type: TYPE_INT, hint: HINT_ENUM, hintString: enumHint };
@@ -918,6 +841,11 @@ function exportSpecFromType(
   if (kind.kind === "builtin") return { type: kind.scalar, hintString: "" };
   if (kind.kind === "resource") return { type: TYPE_OBJECT, hint: HINT_RESOURCE, hintString: kind.name };
   return { type: TYPE_OBJECT, hint: HINT_NODE, hintString: kind.name };
+}
+
+function isBooleanType(type: ts.Type): boolean {
+  if (type.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return true;
+  return type.isUnion() && type.types.every((part) => part.flags & (ts.TypeFlags.BooleanLiteral | ts.TypeFlags.Null | ts.TypeFlags.Undefined));
 }
 
 function unwrapNull(type: ts.Type): ts.Type {

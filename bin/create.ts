@@ -1,14 +1,13 @@
 #!/usr/bin/env bun
 // create-godotjs-bun: scaffold a GodotJS + Bun game project.
-//   bunx create-godotjs-bun my-game [--name "My Game"] [--godot /path/to/binary] [--no-effect] [--no-install] [--no-git]
+//   bunx create-godotjs-bun my-game [--name "My Game"] [--godot /path/to/binary [--save-config]] [--no-effect] [--no-install] [--no-git]
+// Hidden: --template <dir> scaffolds from another template dir (the starter/ of a godotjs-esm checkout) instead of the bundled one.
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { resolveGodot } from "../template/tools/config.ts";
 
-const templateDir = join(import.meta.dir, "..", "template");
 const version = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")).version as string;
-const USAGE = 'usage: bunx create-godotjs-bun <target-dir> [--name "Project Name"] [--godot /path/to/binary] [--no-effect] [--no-install] [--no-git]';
+const USAGE = 'usage: bunx create-godotjs-bun <target-dir> [--name "Project Name"] [--godot /path/to/binary [--save-config]] [--no-effect] [--no-install] [--no-git]';
 
 function fail(message: string): never {
   console.error(`error: ${message}`);
@@ -41,11 +40,18 @@ const takeSwitch = (flag: string): boolean => {
 };
 const name = takeFlag("--name");
 const godotFlag = takeFlag("--godot");
+const templateFlag = takeFlag("--template");
+const templateDir = templateFlag ? resolve(templateFlag) : join(import.meta.dir, "..", "template");
+if (!existsSync(join(templateDir, "tools", "toolchain-files.json"))) fail(`${templateDir} is not a template (no tools/toolchain-files.json)`);
+const { resolveGodot, cli: configCli } = (await import(join(templateDir, "tools", "config.ts"))) as typeof import("../../../starter/tools/config.ts");
+const { stampProject } = (await import(join(templateDir, "tools", "update.ts"))) as typeof import("../../../starter/tools/update.ts");
+const saveConfig = takeSwitch("--save-config");
 const noEffect = takeSwitch("--no-effect");
 const noInstall = takeSwitch("--no-install");
 const noGit = takeSwitch("--no-git");
 if (argv.length !== 1 || argv[0].startsWith("-") || name === "" || godotFlag === "") fail(USAGE);
 if (godotFlag && !existsSync(resolve(godotFlag))) fail(`--godot: ${resolve(godotFlag)} does not exist`);
+if (saveConfig && !godotFlag) fail("--save-config needs --godot /path/to/binary");
 
 const target = resolve(argv[0]);
 const projectName = name ?? basename(target);
@@ -56,14 +62,18 @@ if (existsSync(target) && (!statSync(target).isDirectory() || readdirSync(target
 
 // --- copy the template ---
 let copied = 0;
+// a starter/ checkout (--template) carries what the assembled template leaves out: node_modules, build output, tests, the gap checker
+const skip = (rel: string): boolean => /^(node_modules|\.godot|gen|out|tests)(\/|$)/.test(rel) || rel === "tools/check-engine.ts" || rel === ".env" || rel.endsWith(".uid");
 const walk = (dir: string): void => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const from = join(dir, entry.name);
     const rel = relative(templateDir, from).split(sep).join("/");
+    if (skip(rel)) continue;
     if (entry.isDirectory()) walk(from);
     else if (entry.isFile()) {
       // npm strips .gitignore from packages, so the template stores it as _gitignore
-      const to = join(target, rel === "_gitignore" ? ".gitignore" : rel);
+      // game-tests/ in the template is the testing kit's samples: they become the game's own tests/ (the starter's tests/ stay in godotjs-esm)
+      const to = join(target, rel === "_gitignore" ? ".gitignore" : rel.startsWith("game-tests/") ? `tests/${rel.slice("game-tests/".length)}` : rel);
       mkdirSync(dirname(to), { recursive: true });
       copyFileSync(from, to);
       if (rel.startsWith(".githooks/")) chmodSync(to, 0o755);
@@ -72,6 +82,9 @@ const walk = (dir: string): void => {
   }
 };
 walk(templateDir);
+
+// --- toolchain.json: which version of the toolchain files this project holds (tools/update.ts reads it) ---
+stampProject(target, templateDir, version);
 
 // --- --no-effect: overlay the Effect-free demo and drop the dependency (and the lockfile that pins it) ---
 if (noEffect) {
@@ -84,11 +97,24 @@ if (noEffect) {
     }
   };
   apply(overlay);
+  // template files that import effect: tsc covers src/lib, so they must not exist without the dependency
+  // (the testing kit's Effect samples go too: tools/test-kit.ts itself is Effect-free, tests/effect-support.ts is what imports effect)
+  // the game services kit (src/lib/services/*) imports effect: the whole folder goes
+  rmSync(join(target, "src/lib/services"), { recursive: true, force: true });
+  for (const effectOnly of ["src/lib/game-clock.ts", "src/lib/frame-clock.ts", "src/lib/godot-effect.ts", "src/lib/camp.ts", "tests/effect-support.ts", "tests/logic/camp.test.ts", "tests/engine/effect.test.ts"]) rmSync(join(target, effectOnly), { force: true });
   rmSync(join(target, "bun.lock"), { force: true });
   const tp = JSON.parse(readFileSync(join(target, "package.json"), "utf8"));
   delete tp.dependencies?.effect;
   if (tp.dependencies && Object.keys(tp.dependencies).length === 0) delete tp.dependencies;
   writeFileSync(join(target, "package.json"), `${JSON.stringify(tp, null, 2)}\n`);
+}
+
+// --- the testing kit: type-check the game's tests with the rest of the project ---
+if (existsSync(join(target, "tests"))) {
+  const tsPath = join(target, "tsconfig.json");
+  const ts = JSON.parse(readFileSync(tsPath, "utf8"));
+  if (Array.isArray(ts.include) && !ts.include.includes("tests")) ts.include.push("tests");
+  writeFileSync(tsPath, `${JSON.stringify(ts, null, 2)}\n`);
 }
 
 // --- name the project ---
@@ -106,16 +132,14 @@ pkg.name = projectName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 writeFileSync(
   join(target, "README.md"),
-  `# ${projectName}\n\nA GodotJS + Bun game project, made with [create-godotjs-bun](https://github.com/Galz648/create-godotjs-bun) ${version}.\n\nThe day-to-day loop, layout and gotchas are in [docs/DAILY.md](docs/DAILY.md).\n\n\`\`\`sh\nbun run dev:build   # terminal 1: rebuild on save\nbun run editor      # terminal 2: the Godot editor (F5 to play)\nbun run dev         # or: rebuild and relaunch a game window on every save\nbun run typecheck\n\`\`\`\n`,
+  `# ${projectName}\n\nA GodotJS + Bun game project, made with [create-godotjs-bun](https://github.com/Galz648/create-godotjs-bun) ${version}.\n\nThe day-to-day loop, layout and gotchas are in [docs/DAILY.md](docs/DAILY.md).\n\n\`\`\`sh\nbun run dev:build   # terminal 1: rebuild on save\nbun run editor      # terminal 2: the Godot editor (F5 to play)\nbun run dev         # or: rebuild and relaunch a game window on every save\nbun run typecheck\nbun run test          # logic tests (bun test, no Godot)\nbun run test:engine   # engine tests (headless Godot)\n\`\`\`\n\nHow to test your game: [docs/DAILY.md, "Testing your game"](docs/DAILY.md#testing-your-game).\n`,
 );
 console.log(`created ${copied} files in ${target}`);
 
-// --- Godot binary: --godot wins; a binary from the shell env is remembered in this project's .env;
-// the global config (~/.config/godotjs/config.json) needs nothing, projects inherit it. ---
-const found = godotFlag ? { path: resolve(godotFlag), source: "--godot" } : resolveGodot();
-if (found && (found.source === "--godot" || found.source.startsWith("GODOTJS"))) {
-  writeFileSync(join(target, ".env"), `GODOTJS=${found.path}\n`);
-}
+// --- Godot binary: nothing is written into the project. --godot only reports how to use that binary, or with
+// --save-config saves it in the global config (~/.config/godotjs/config.json); otherwise GODOTJS in the shell or the global config apply. ---
+const flagged = godotFlag ? resolve(godotFlag) : undefined;
+if (flagged && saveConfig) configCli(["set", flagged]);
 
 // --- install, build, git ---
 if (!noInstall) {
@@ -132,9 +156,12 @@ if (!noGit) {
   }
 }
 
-const godotLine = found
-  ? `Godot binary: ${found.path}  (${found.source})`
-  : "Godot binary: NOT configured. Run  bun tools/config.ts set /path/to/godot.macos.editor.universal  inside the project\n  (saves it once for every project), or put GODOTJS=/path/to/binary in .env";
+const found = resolveGodot();
+const godotLine = flagged && !saveConfig
+  ? `Godot binary: ${flagged} was NOT saved. Use it with  export GODOTJS=${flagged}  (this shell only),\n  or save it for every project:  bun tools/config.ts set ${flagged}  (or re-run with --save-config)`
+  : found
+    ? `Godot binary: ${found.path}  (${found.source})`
+    : "Godot binary: NOT configured. Run  bun tools/config.ts set /path/to/godot.macos.editor.universal  inside the project\n  (saves it once for every project), or export GODOTJS=/path/to/binary in the shell";
 console.log(`
 Created "${projectName}" at ${target}
 ${godotLine}

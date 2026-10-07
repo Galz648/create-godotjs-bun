@@ -5,6 +5,11 @@ config/name="GodotJS + Effect starter"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.6")
 
+[debug]
+
+file_logging/enable_file_logging=true
+file_logging/enable_file_logging.pc=true
+
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/hot_reload/plugin.cfg")

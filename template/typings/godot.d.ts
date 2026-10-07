@@ -14,6 +14,9 @@ declare module "godot" {
     emit(...args: Parameters<T>): void;
     as_promise(): Promise<unknown>;
   }
+  // Used by src/lib/godot-effect.ts (Effect projects).
+  export class Callable { static create(fn: (...args: any[]) => any): Callable; }
+  export function is_instance_valid(obj: any): boolean;
   export class Node {
     get_tree(): { quit(code?: number): void };
     add_child(node: Node): void;

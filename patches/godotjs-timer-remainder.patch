@@ -1,0 +1,144 @@
+diff --git a/bridge/jsb_environment.cpp b/bridge/jsb_environment.cpp
+index e121efa..c7bc2f6 100644
+--- a/bridge/jsb_environment.cpp
++++ b/bridge/jsb_environment.cpp
+@@ -523,6 +523,11 @@ namespace jsb
+         EnvironmentStore::get_shared().remove(this);
+     }
+ 
++    void Environment::set_timer_anchor(uint64_t p_anchor_us)
++    {
++        timer_manager_.set_clock([]() -> uint64_t { return OS::get_singleton()->get_ticks_usec(); }, p_anchor_us);
++    }
++
+     void Environment::update(uint64_t p_delta_msecs)
+     {
+ #if JSB_WITH_ESSENTIALS
+diff --git a/bridge/jsb_environment.h b/bridge/jsb_environment.h
+index cd41485..82d57ca 100644
+--- a/bridge/jsb_environment.h
++++ b/bridge/jsb_environment.h
+@@ -508,6 +508,8 @@ namespace jsb
+         void set_battery_save_mode(bool p_enabled) { isolate_->SetBatterySaverMode(p_enabled); }
+ 
+         void update(uint64_t p_delta_msecs);
++        // real time (microseconds, OS ticks) that the timer wheel's current time corresponds to; keeps timers from firing early
++        void set_timer_anchor(uint64_t p_anchor_us);
+ 
+ #if !JSB_WITH_WEB
+         // [thread safe] it's OK to call this method before the env is initialized.
+diff --git a/internal/jsb_timer_manager.h b/internal/jsb_timer_manager.h
+index a00f3d9..5e8e9d0 100644
+--- a/internal/jsb_timer_manager.h
++++ b/internal/jsb_timer_manager.h
+@@ -40,7 +40,7 @@ namespace jsb::internal
+      * @tparam kWheelSlotNum number of slots in each wheel
+      * @tparam kJiffies the minimum time resolution (in milliseconds)
+      */
+-    template<typename TFunction, uint8_t kWheelNum = 12, uint8_t kWheelSlotNum = 6, uint64_t kJiffies = 10>
++    template<typename TFunction, uint8_t kWheelNum = 12, uint8_t kWheelSlotNum = 6, uint64_t kJiffies = 1>
+     class TTimerManager
+     {
+     public:
+@@ -132,6 +132,8 @@ namespace jsb::internal
+ 
+         uint64_t _elapsed;
+         uint32_t _time_slice;
++        uint64_t (*_now_us)() = nullptr; // real clock (microseconds); null: no frame-lead compensation (standalone use, tests)
++        uint64_t _anchor_us = 0;         // real time (microseconds) that the wheel's time `_elapsed + _time_slice` corresponds to
+         SArray<TimerData, IndexSafe64> _used_timers;
+         WheelState _wheels[kWheelNum];
+         std::vector<IndexSafe64> _activated_timers;
+@@ -168,6 +170,9 @@ namespace jsb::internal
+ 
+         jsb_force_inline uint64_t now() const { return _elapsed; }
+ 
++        // tell the manager which real time (microseconds, read with `p_now_us`) the wheel's current time corresponds to
++        jsb_force_inline void set_clock(uint64_t (*p_now_us)(), uint64_t p_anchor_us) { _now_us = p_now_us; _anchor_us = p_anchor_us; }
++
+         TimerHandle add_timer(TFunction&& p_fn, uint64_t p_rate, bool p_is_loop = false,
+                               uint64_t p_first_delay = 0)
+         {
+@@ -183,7 +188,7 @@ namespace jsb::internal
+             check_internal_state();
+             _used_timers.remove_at(inout_handle.id);
+ 
+-            const uint64_t delay = p_first_delay > 0 ? p_first_delay : p_rate;
++            const uint64_t delay = align_delay(p_first_delay > 0 ? p_first_delay : p_rate);
+             const IndexSafe64 index = _used_timers.add(TimerData());
+             TimerData& timer = _used_timers.get_value(index);
+             timer.rate = p_rate;
+@@ -301,8 +306,9 @@ namespace jsb::internal
+                 if (_used_timers.try_get_value_pointer(index, timer) && timer->loop)
+                 {
+                     // update the next tick time
+-                    timer->expires = timer->rate + _elapsed;
+-                    rearrange_timer(index, timer->rate);
++                    const uint64_t delay = align_delay(timer->rate);
++                    timer->expires = delay + _elapsed;
++                    rearrange_timer(index, delay);
+                 }
+                 else
+                 {
+@@ -314,6 +320,25 @@ namespace jsb::internal
+         }
+ 
+     private:
++        // A timer must never fire before its due time. Two things make the wheel's clock differ from the real clock:
++        //  - the wheel only turns in whole jiffies: `_time_slice` is the part of the current jiffy already elapsed, so
++        //    the wheel's time is `_elapsed + _time_slice`;
++        //  - the wheel is only fed once per frame (`set_clock` anchors it to the real time of that feed), while scripts
++        //    arm timers at any point inside the frame: that part (`lead`) is already gone when the timer is armed.
++        // A timer armed `lead` ms after the anchor is due `p_delay` ms from now, which is `p_delay + _time_slice + lead`
++        // wheel ms from the wheel's time; round up to a whole jiffy so the wheel fires it on a tick at or after the due
++        // time (late by under one jiffy, never early).
++        jsb_force_inline uint64_t align_delay(uint64_t p_delay) const
++        {
++            uint64_t lead = 0;
++            if (_now_us && _anchor_us)
++            {
++                const uint64_t now_us = _now_us();
++                if (now_us > _anchor_us) lead = (now_us - _anchor_us + 999) / 1000;
++            }
++            return ((p_delay + _time_slice + lead + kJiffies - 1) / kJiffies) * kJiffies;
++        }
++
+         bool _clear_timer(const IndexSafe64& p_index)
+         {
+             check_internal_state();
+diff --git a/weaver/jsb_script_language.cpp b/weaver/jsb_script_language.cpp
+index 4492111..ad3ec72 100644
+--- a/weaver/jsb_script_language.cpp
++++ b/weaver/jsb_script_language.cpp
+@@ -134,9 +134,18 @@ void GodotJSScriptLanguage::finish()
+ void GodotJSScriptLanguage::frame()
+ {
+     const uint64_t base_ticks = Engine::get_singleton()->get_frame_ticks();
+-    const uint64_t elapsed_milli = (base_ticks - last_ticks_) / 1000ULL; // milliseconds
++    // the first frame starts the clock: last_ticks_ is 0 until then, and feeding (base_ticks - 0) would advance the
++    // timer wheel by the whole engine uptime, so a timer armed in _ready of the first scene would fire at once
++    if (last_ticks_ == 0) last_ticks_ = base_ticks;
++
++    // carry the sub-millisecond remainder: flooring every frame loses ~0.5 ms per frame
++    pending_us_ += base_ticks - last_ticks_;
++    const uint64_t elapsed_milli = pending_us_ / 1000ULL; // milliseconds
++    pending_us_ -= elapsed_milli * 1000ULL;
+ 
+     last_ticks_ = base_ticks;
++    // the wheel is now at base_ticks minus the carried remainder (real time): lets the timer manager arm timers that never fire early
++    environment_->set_timer_anchor(base_ticks - pending_us_);
+     environment_->update(elapsed_milli);
+ 
+ #if JSB_DEBUG
+diff --git a/weaver/jsb_script_language.h b/weaver/jsb_script_language.h
+index 9701d51..d42141d 100644
+--- a/weaver/jsb_script_language.h
++++ b/weaver/jsb_script_language.h
+@@ -96,6 +96,7 @@ private:
+ 
+     bool once_inited_ = false;
+     uint64_t last_ticks_ = 0;
++    uint64_t pending_us_ = 0; // sub-millisecond remainder carried across frames
+     std::shared_ptr<jsb::Environment> environment_;
+ 
+     Mutex shadow_mutex_;

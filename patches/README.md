@@ -4,6 +4,31 @@ Apply on a pristine checkout of [godotjs/GodotJS](https://github.com/godotjs/God
 
 `scripts/out` is gitignored. The runtime bundle patch adds the three runtime artifacts scons embeds. The editor bundle (`jsb.editor.bundle.js` and its `.d.ts` / `.map`) is not part of these patches; a `skip_js_runtime=yes` build still needs those files from a previous `pnpm build` of the unmodified editor package.
 
+## Classification (2026-10-07, per ADR 0007 and `docs/design/simplification.md` section 8)
+
+Default target is the STOCK engine and stock export templates. Nothing below is required to build or ship the starter. "Ships" means the change runs inside exported games, so it would need custom export templates; "dev-only" affects the editor and `--headless` runs only. Line counts are patch file sizes. No patch file or binary in `bin/` was changed by this classification.
+
+| # | Patch | Lines | Ships to players or dev-only | Tooling alternative today | Status |
+|---|---|---|---|---|---|
+| 1 | `native-esm` | 598 | dev (ESM loader for editor and headless runs; the bundle works on stock) | the Bun bundle (ADR 0001) | optional: only if you want native ESM during development |
+| 2 | `runtime-require-order` | 56 | ships | `starter/polyfills/web-globals.js`, imported first in the bundle, gives the same polyfills on stock | DEPRECATED (kept in place, see below) |
+| 3 | `runtime-bundle` | 2463 | ships | same polyfill file | DEPRECATED (kept in place, see below) |
+| 4 | `source-map-column` | 184 | dev | `tools/unmap.ts` and `bun run headless:mapped` | optional: only needed for mapped positions inside the editor |
+| 5 | `script-error-link` | 141 | dev | none (editor click-through to the `.ts` line) | keep (the clickable-errors DX piece; `clicklink` binary) |
+| 6 | `onready-continue` | 50 | ships | the plugin generates the `@onready` assignments in `_ready` | optional |
+| 7 | `export-hints` | 499 (includes a regenerated runtime bundle) | ships | the plugin emits explicit `@gd.export(type, opts)` | optional |
+| 8 | `global-class` | 33 | ships | none for scalar `Node` exports (`check:engine` reports it OPEN on stock; cosmetic) | optional |
+| 9 | `callable-function` | 109 | ships | the plugin wraps `connect(fn)` (pick one: patch or wrapper) | optional |
+| 10 | `set-script-constructor` | 86 | ships | none (the plugin only warns on `set_script` of a JS class) | keep (the only real semantic gap) |
+| 11 | `timer-remainder` | 32 | ships | `starter/polyfills/web-globals.js` first-frame guard (the first-frame part only); none for the 3% to 10% lateness | optional (built, tested; stock stays the default) |
+| 12 | `rejection-stack` | 34 | ships | none | optional (built, tested; dev diagnostics, an upstream candidate) |
+
+Upstream drafts for the fixes (6 to 10 and the source-map patch) are in `docs/upstream/`; nothing has been sent.
+
+### Deprecated, but left in place
+
+`godotjs-runtime-require-order.patch` and `godotjs-runtime-bundle.patch` are DEPRECATED: `polyfills/web-globals.js` in the Bun bundle replaces what they provide (TextEncoder/TextDecoder, AbortController family, `setImmediate`, `Error.stack` header, `crypto`). They are not deleted and not edited because the cumulative binaries in `bin/` (`srcmap`, `clicklink`, `model`) were built with them, and patches 7 and later were generated on top of the regenerated runtime bundle from patch 3 (patch 7 replaces that bundle again). Removing them would make the documented apply order fail to reproduce those binaries. Revisit when the next engine rebuild is planned: drop 2 and 3, rebase 7 without the bundle hunks, and build with `skip_js_runtime=no`.
+
 ## Order
 
 1. `godotjs-native-esm.patch` — quickjs-ng ESM loader (`bridge/jsb_module_resolver.cpp`), zero-delay timer drain (`bridge/jsb_environment.cpp`, `internal/jsb_timer_manager.h`), and `scripts/jsb.runtime/src/jsb.polyfill.ts` (TextEncoder/TextDecoder, EventTarget, AbortController, fast `setImmediate`, `Error.stack` header). The `main.ts` hunk in this patch requires `jsb.polyfill` before `jsb.inject`; the next patch fixes that order.
@@ -16,6 +41,8 @@ Apply on a pristine checkout of [godotjs/GodotJS](https://github.com/godotjs/God
 8. `godotjs-global-class.patch` — property parsing in `bridge/jsb_class_info.cpp` reads a string `class_name` off the JS property info and stores it on `ScriptPropertyInfo`. Scalar `export.object(Node)` / `export.object(Node2D)` then carry `class_name` `Node` / `Node2D`, matching GDScript. Hint 17 (`Resource`, a script class `Person`) already got `class_name` from `PropertyInfo`'s constructor copying `hint_string`; arrays stay empty. The TypeScript global-class regex in `get_global_class_name` is unchanged. `RegEx.search` is unanchored and `\s` matches newlines, so `@bind()`, stacked `@bind.tool()` / `@bind()`, `@gd.class`, and `export default class` after other lines already match, including generics (`export default class Box<T> extends Resource`, group 3 is `<`). Still missed: `export default abstract class`. A comment that contains `export default class Name extends Base` is still the first match, so a later real class in that file is ignored.
 9. `godotjs-callable-function.patch` — both `TypeConvert::js_to_gd_var` overloads turn a JS function into a free `JSCallable` (null object id, `get_cached_function`, one bank ref released in `JSCallable::~JSCallable`), the same construction as `Callable.create(fn)`. Typed `Callable` arguments (`signal.connect`, `Tween.tween_callback`, `SceneTree.process_frame`, `Timer.timeout`, `Object.connect`, `Array.filter` / `map`) and untyped Variant slots accept a plain function or an arrow. `this` stays undefined. `JSCallable` equality, ordering, and `hash` include `object_id_` (mixed the way `Callable::hash` mixes object and method), so `Callable.create(objA, fn)` and `Callable.create(objB, fn)` no longer compare equal, and `is_connected(fn)` / `disconnect(fn)` match the function plus that owner. `Callable.bind` and `CONNECT_ONE_SHOT` are unchanged Godot core. `IsConstructor` is not a rejection: a plain `function` declaration is a constructor in quickjs-ng, and rejecting it would reject `connect(fn)`. No runtime-bundle change.
 10. `godotjs-set-script-constructor.patch` — the already-bound branch of `Environment::crossbind` sets the script prototype, then `Reflect.construct`s the class so field initialisers and the constructor body run on the existing wrapper. `ObjectTemplate::constructor` returns that wrapper (`GetReturnValue`) and does not call `bind_godot_object` again. The quickjs-ng and JavaScriptCore `_constructor` shims return that object and drop the temporary `this`. `Environment::rebind` is unchanged, so an editor reload still only swaps the prototype. No runtime-bundle change.
+11. `godotjs-timer-remainder.patch` — `GodotJSScriptLanguage::frame()` carries the sub-millisecond remainder across frames (`pending_us_`) instead of flooring each frame's microseconds to ms, and the first frame starts the clock (`last_ticks_ == 0` feeds 0 ms, not the whole engine uptime). Independent of patches 1 to 10 (touches `weaver/jsb_script_language.{h,cpp}` only; applies on stock b1d8b3f). `docs/design/engine-patches-timer-and-rejection.md`, optional check `starter/tests/engine-patched/run.sh`.
+12. `godotjs-rejection-stack.patch` — `PromiseRejectCallback_` in `bridge/jsb_environment.cpp` prints the reason's `stack` (through `process_source_position`, the mapping the other script errors use) when the reason is an object with a string `stack`, else the old string. Independent of patches 1 to 11 (applies on stock b1d8b3f). Same doc and check.
 
 ```sh
 cd GodotJS
@@ -29,6 +56,8 @@ git apply /path/to/patches/godotjs-export-hints.patch
 git apply /path/to/patches/godotjs-global-class.patch
 git apply /path/to/patches/godotjs-callable-function.patch
 git apply /path/to/patches/godotjs-set-script-constructor.patch
+git apply /path/to/patches/godotjs-timer-remainder.patch   # optional, independent
+git apply /path/to/patches/godotjs-rejection-stack.patch   # optional, independent
 cd ../godot-src
 scons platform=macos arch=arm64 target=editor use_quickjs_ng=yes skip_js_runtime=yes vulkan=no dev_build=no
 ```

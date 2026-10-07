@@ -2,6 +2,7 @@ import "../polyfills/web-globals.js"; // TextEncoder, AbortController, fast setI
 import { Node, ResourceLoader, type Script } from "godot";
 import { devState } from "./lib/dev-state";
 import { gd } from "./lib/gd";
+import { hotReload } from "./lib/hot-reload";
 import { sharedTag } from "./lib/shared";
 
 // GDScript's global `load` is not injected into bundled modules. Same call: ResourceLoader.load.
@@ -32,7 +33,14 @@ export default class GameRoot extends Node {
     // stock engine (accessor fields stay uninitialised). The build plugin warns if you call it.
     // `call("new")` constructs once on the stock engine and on a patched engine.
     this.add_child(load("res://src/scripts/Spinner.ts").call("new") as Node);
+    hotReload(); // dev only (`bun run dev`): swap edited script classes in this running game. See DAILY.md.
     devState("demo", { save: () => ({ ticks: this.ticks }), load: (s) => { this.ticks = s.ticks; } });
-    setInterval(() => console.log(`demo ticks=${++this.ticks}`), 1000);
+    // Call through a method: a closure keeps the code it was created with, a method on the prototype is swapped by hot reload.
+    setInterval(() => this.tick(), 1000);
+  }
+
+  // Edit this text while `bun run dev` runs: hot reload swaps it live and the counter keeps going.
+  tick(): void {
+    console.log(`demo ticks=${++this.ticks}`);
   }
 }

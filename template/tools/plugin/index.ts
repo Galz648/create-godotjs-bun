@@ -1,9 +1,11 @@
 // Bun plugin. Rewrites project TypeScript before Bun emits the bundle, then the build
 // composes Bun's source map with the edit map so stack lines stay on the original file.
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { setEngineClassRoot } from "./engine-classes.ts";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
 import { composeMappings, type TransformMap } from "./sourcemap.ts";
+import { resolveRewrites, type PluginRewrites } from "./options.ts";
 import { SceneIndex } from "./scenes.ts";
 import { transformSourceFile } from "./transform.ts";
 
@@ -12,9 +14,17 @@ const GODOT_DTS = join(PLUGIN_DIR, "types/godot.d.ts");
 const ANNOT_DTS = join(PLUGIN_DIR, "types/godot.annotations.d.ts");
 
 const NEEDS =
-  /export\s*\.\s*array\s*\(|export\s*\.\s*object\s*\(|\.onready\s*\(|\.connect\s*\(|\.disconnect\s*\(|\.is_connected\s*\(|tween_callback\s*\(|\.set_script\s*\(|\bgd\s*\.\s*(?:class|export|onready|signal)\b|\bSignal\s*<|Callable\s*\.\s*create\s*\(|\.filter\s*\(|\.map\s*\(/;
+  /export\s*\.\s*array\s*\(|export\s*\.\s*object\s*\(|\.onready\s*\(|\.connect\s*\(|\.disconnect\s*\(|\.is_connected\s*\(|tween_callback\s*\(|\.set_script\s*\(|\bgd\s*\.\s*(?:class|export|onready|signal)\b|\baccessor\s+[\w$\"']|\bSignal\s*<|Callable\s*\.\s*create\s*\(|\.filter\s*\(|\.map\s*\(/;
 
-const CALLABLE_HELPER = `import { Callable } from "godot";
+// Cheap text cue for abort-checks.ts (engine tickets 80 to 85): a file that cannot contain one of its constructs is not parsed for it.
+// A class imported under another name (`import { Vector2i as V }`) is cued by the `as`.
+const NEEDS_ABORT =
+  /\bnew\s+(?:[\w$]+\.)?(?:Vector[234]i?|Rect2i?|Basis|GArray|GridMapEditorPlugin|ScriptCreateDialog)\b|\.unreference\s*\(|\.input_count\s*=|offset_polyline\s*\(|\b(?:Vector[234]i?|Rect2i?|Basis|GArray|GridMapEditorPlugin|ScriptCreateDialog|AnimationNodeTransition|RefCounted|Geometry2D)\s+as\s+\w/;
+
+// value-checks.ts (tickets 262, 265, 267, 268) reads types, not text patterns: any file that imports from the engine can hold one of its constructs.
+const NEEDS_VALUE = /from\s*["']godot["']/;
+
+const CALLABLE_HELPER =`import { Callable } from "godot";
 
 const owners = new WeakMap<object, WeakMap<Function, Function>>();
 
@@ -43,9 +53,12 @@ export interface Session {
   root: string;
 }
 
-export function createSession(root: string): Session {
+/** `rewrites`: per-rewrite switches. Absent: read from the project (options.ts: GODOTJS_PLUGIN_OFF, package.json). */
+export function createSession(root: string, rewrites?: Partial<PluginRewrites>): Session {
   const projectRoot = realpathSync(root);
+  const switches = { ...resolveRewrites(projectRoot), ...rewrites };
   const maps = new Map<string, TransformMap>();
+  setEngineClassRoot(projectRoot);
   const program = createProgram(projectRoot);
   // The runtime half. A project's own src/lib/gd.ts wins; a test project without one uses the starter's.
   const ownGd = join(projectRoot, "src/lib/gd.ts");
@@ -72,9 +85,9 @@ export function createSession(root: string): Session {
         contents: CALLABLE_HELPER,
         loader: "ts",
       }));
-      // Only project sources. A filter on every .ts file makes Bun rebuild
+      // Only project sources (src/, gen/, and tests/ so engine tests get the same rewrites as the game). A filter on every .ts file makes Bun rebuild
       // dependencies (starter pulls in effect) on each run.
-      const projectSrc = new RegExp(`^${projectRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(src|gen)/.*\\.tsx?$`);
+      const projectSrc = new RegExp(`^${projectRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(src|gen|tests)/.*\\.tsx?$`);
       build.onLoad({ filter: projectSrc }, (args) => {
         if (args.namespace && args.namespace !== "file") return;
         if (!args.path.endsWith(".ts") || args.path.endsWith(".d.ts")) return;
@@ -86,10 +99,11 @@ export function createSession(root: string): Session {
         }
         if (file.includes(`${join("node_modules", "")}`) || file.startsWith(PLUGIN_DIR)) return;
         const text = readFileSync(file, "utf8");
-        if (!NEEDS.test(text)) return;
+        const valueChecks = switches.badConversions || switches.lostWrites || switches.valueStrings || switches.packedIteration;
+        if (!NEEDS.test(text) && !(switches.abortGuards && NEEDS_ABORT.test(text)) && !(valueChecks && NEEDS_VALUE.test(text))) return;
         const sourceFile = program.getSourceFile(file);
         if (!sourceFile) return;
-        const result = transformSourceFile(sourceFile, checker, { gdModule, scenes: sceneIndex });
+        const result = transformSourceFile(sourceFile, checker, { gdModule, scenes: sceneIndex, rewrites: switches });
         if (!result) return;
         for (const warning of result.warnings) console.warn(`[tooling] ${warning}`);
         if (result.map.generatedText === result.map.originalText) return;
@@ -211,5 +225,8 @@ function listSources(root: string): string[] {
     }
   };
   walk(src);
+  // the game's engine tests and the generated runner entry (tools/test.ts) are roots too, so connect(fn) and friends are rewritten there as in src/
+  walk(join(root, "tests", "engine"));
+  walk(join(root, "tests", "_runner"));
   return files;
 }
