@@ -2,6 +2,11 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com). Versions follow [Semantic Versioning](https://semver.org); before 1.0 a minor bump (0.x.0) adds features or may change behaviour, a patch bump (0.x.y) is fixes only.
 
+## 0.5.1
+
+### Fixed
+- **Windows**: the build plugin's source filter now accepts backslash paths (on Windows `@gd.export()` was never rewritten and the game failed to load), and `bun run test:engine` writes forward slashes into the generated test entry. The CI workflow runs scaffold, type-check, build, headless run, logic tests and engine tests on macOS, Linux and Windows, all green on this release (the first Windows evidence; exporting and running an exported Windows build is still unverified).
+
 ## 0.5.0
 
 ### Added
