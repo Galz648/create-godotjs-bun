@@ -87,7 +87,10 @@ export function createSession(root: string, rewrites?: Partial<PluginRewrites>):
       }));
       // Only project sources (src/, gen/, and tests/ so engine tests get the same rewrites as the game). A filter on every .ts file makes Bun rebuild
       // dependencies (starter pulls in effect) on each run.
-      const projectSrc = new RegExp(`^${projectRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(src|gen|tests)/.*\\.tsx?$`);
+      // Either path separator (Windows hands Bun backslash paths) and, on Windows, a case-insensitive drive letter.
+      const sep = "[\\\\/]";
+      const rootRe = projectRoot.split(/[\\/]/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(sep);
+      const projectSrc = new RegExp(`^${rootRe}${sep}(src|gen|tests)${sep}.*\\.tsx?$`, process.platform === "win32" ? "i" : "");
       build.onLoad({ filter: projectSrc }, (args) => {
         if (args.namespace && args.namespace !== "file") return;
         if (!args.path.endsWith(".ts") || args.path.endsWith(".d.ts")) return;
