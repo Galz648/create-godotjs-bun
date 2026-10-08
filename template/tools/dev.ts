@@ -1,5 +1,7 @@
 // Rebuild on save and relaunch the game. `bun run dev:build` stays watch-only.
-// GODOT_ARGS is split on spaces and appended after `--path .` (tests pass `--headless`).
+// GODOT_ARGS is split on spaces and appended after `--path .` (tests pass `--headless`; game arguments after a `--`).
+// A relaunch starts in the scene that was running (the game's save records it, src/lib/dev-state.ts): `--main-scene` turns
+// that off, `--scene res://x.tscn` picks the scene of the first launch (and of a relaunch with no recorded scene).
 // State survives a relaunch: before killing the game the runner asks it to save (src/lib/dev-state.ts),
 // the next process restores it. `--fresh` (or GODOTJS_DEV_FRESH=1) turns that off. docs/design/dev-state.md.
 // Hot reload: when the bundles that changed are script classes the running game can swap in place (src/lib/hot-reload.ts,
@@ -30,7 +32,7 @@ const hot = !(process.argv.includes("--no-hot") || ["0", "false"].includes(proce
 const OUT_DIR = join(ROOT, ".godot", "GodotJS");
 const HOT_REQUEST = join(ROOT, ".godot", "dev-state", "reload-request.json");
 const HOT_ACK = join(ROOT, ".godot", "dev-state", "reload-ack.json");
-// Old behaviour, ONLY as the negative control of tests/hot-reload: say "swapped" for plain modules and skip the shape probe.
+// Old behaviour, ONLY as the negative control of starter/tests/hot-reload: say "swapped" for plain modules and skip the shape probe.
 const HOT_UNSAFE = process.env.GODOTJS_HOT_UNSAFE === "1";
 const raw = process.argv.includes("--raw") || ["1", "true"].includes(process.env.GODOTJS_DEV_RAW ?? "");
 const unmapOutput = !raw && (Boolean(process.stdout.isTTY) || ["1", "true"].includes(process.env.GODOTJS_DEV_UNMAP ?? ""));
@@ -46,6 +48,39 @@ let saveCount = 0;
 
 const godot = requireGodot();
 const extraArgs = (process.env.GODOT_ARGS ?? "").split(" ").filter((arg) => arg.length > 0);
+const LISTENING_FILE = join(STATE_DIR, "listening"); // written by the game once its dev-state listener runs
+const keepScene = !process.argv.includes("--main-scene");
+const SCENE_PATH = /^res:\/\/.+\.(tscn|scn)$/;
+const startScene = process.argv.includes("--scene") ? (process.argv[process.argv.indexOf("--scene") + 1] ?? "") : "";
+if (process.argv.includes("--scene") && !SCENE_PATH.test(startScene)) {
+  console.error("error: --scene needs a res:// path to a .tscn or .scn file");
+  process.exit(2);
+}
+
+/** The project's main scene as a res:// path (project.godot may hold a uid://, which the editor writes; resolved from the .tscn headers). */
+function mainScene(): string {
+  let main = "";
+  try { main = /^run\/main_scene\s*=\s*"([^"]*)"/m.exec(readFileSync(join(ROOT, "project.godot"), "utf8"))?.[1] ?? ""; } catch { return ""; }
+  if (!main.startsWith("uid://")) return main;
+  for (const rel of new Bun.Glob("**/*.tscn").scanSync({ cwd: ROOT, onlyFiles: true })) {
+    if (rel.startsWith(".godot/") || rel.includes("node_modules/")) continue;
+    try {
+      if (readFileSync(join(ROOT, rel), "utf8").split("\n", 1)[0].includes(`uid="${main}"`)) return `res://${rel}`;
+    } catch { /* unreadable: skip */ }
+  }
+  return main;
+}
+
+/** The scene to launch: the one the last save recorded, else --scene; "" means the project's main scene. */
+function launchScene(): { scene: string; why: string } {
+  let scene = "";
+  if (keepScene && !fresh) {
+    try { scene = String((JSON.parse(readFileSync(STATE_FILE, "utf8")) as { scene?: unknown }).scene ?? ""); } catch { /* no save */ }
+  }
+  const why = SCENE_PATH.test(scene) ? "the scene that was running; --main-scene starts at the main scene" : "--scene";
+  if (!SCENE_PATH.test(scene)) scene = startScene;
+  return { scene: scene === mainScene() ? "" : scene, why };
+}
 
 let game: Subprocess | null = null;
 let launched = false; // a game was started at least once, so "no game" later means it exited
@@ -253,7 +288,11 @@ async function restartGame(): Promise<void> {
     mkdirSync(STATE_DIR, { recursive: true });
     if (prev && alive(prev)) {
       if (await requestSave(prev)) console.log("dev-state: saved, relaunching");
-      else {
+      else if (!existsSync(LISTENING_FILE) && existsSync(STATE_FILE)) {
+        // The game never started its listener (the script that registers state threw while loading, say): it cannot hold
+        // newer state than the save it was launched with, so keep that save for the next launch instead of losing it.
+        console.log("dev-state: the game never registered any state (did a script throw while loading?); keeping the last save for the next launch");
+      } else {
         console.log(`dev-state: no save acknowledgement within ${SAVE_ACK_MS} ms; relaunching fresh`);
         clearState();
       }
@@ -265,11 +304,13 @@ async function restartGame(): Promise<void> {
   }
   if (prev) await stopGame(prev);
   if (stopping) return;
-  rmSync(HOT_REQUEST, { force: true }); rmSync(HOT_ACK, { force: true });
+  rmSync(HOT_REQUEST, { force: true }); rmSync(HOT_ACK, { force: true }); rmSync(LISTENING_FILE, { force: true });
   bundles = snapshotBundles(); // what the new process is about to load
   sources = pendingSources; // ... and the sources it was built from
+  const { scene, why } = launchScene();
+  if (scene) console.log(`dev: launching ${scene} (${why})`);
   const proc = Bun.spawn({
-    cmd: [godot, "--path", ".", ...extraArgs],
+    cmd: [godot, "--path", ".", ...(scene ? [scene] : []), ...extraArgs],
     cwd: ROOT,
     env: fresh ? process.env : { ...process.env, GODOTJS_DEV_STATE: STATE_DIR },
     stdin: "ignore",

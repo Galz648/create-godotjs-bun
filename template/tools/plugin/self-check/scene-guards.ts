@@ -1,4 +1,4 @@
-// Scene-reader guards the mutation pass found unchecked (tools/mutate.ts, docs/design/mutation-pass.md). Each case names its mutant.
+// Scene-reader guards the mutation pass found unchecked (tools/mutate.ts and docs/design/mutation-pass.md in godotjs-esm). Each case names its mutant.
 import { Hierarchy, parseTscn, SceneIndex, type SceneFile } from "../scenes.ts";
 import { check, compile, gdDecl } from "./harness.ts";
 

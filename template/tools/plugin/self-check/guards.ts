@@ -1,5 +1,7 @@
-// Guards the mutation pass found unchecked (tools/mutate.ts, docs/design/mutation-pass.md). Each case names the mutant it kills.
-// The mutant is the negative control: with that one edit applied to the plugin, the case goes BAD (tools/mutate.ts proves it).
+// Guards the mutation pass found unchecked (tools/mutate.ts and docs/design/mutation-pass.md in godotjs-esm). Each case names the mutant it kills.
+// The mutant is the negative control: with that one edit applied to the plugin, the case goes BAD (godotjs-esm's tools/mutate.ts proves it).
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { check, compile, mustThrow, warningsOf, gdDecl } from "./harness.ts";
 
 /** Transformed text, or "THROWS: <first line>" so a wrongly raised build error is a BAD check, not a crash. */
@@ -18,6 +20,25 @@ const ping = `accessor ping!: Signal<() => void>;`;
   const f = "/virtual/g-setscript.ts";
   const w = warningsOf({ [f]: `import { Node, Resource } from "godot";\ndeclare const n: Node;\ndeclare const r: Resource;\nn.set_script(r);\nn.set_script(ResourceLoader.load("res://a.gd"));\nn.set_script(ResourceLoader.load('res://b.gd'));\n` }, f);
   check(w.length === 1 && w[0].includes("set_script()"), "guard-set-script-warns-only-for-non-gd", `got=${w.length}`);
+}
+
+// -- set_script: a GDScript or an untyped value is not a JS script class (ticket 442, the leak-free.ts relay). Controls: a
+// Resource, a Script and a `ResourceLoader.load` of a .ts path still warn, at their own lines.
+{
+  const f = "/virtual/g-setscript-gd.ts";
+  const src = `import { Node, Resource, Script, ResourceLoader, GDScript } from "godot";\ndeclare const n: Node;\ndeclare const r: Resource;\ndeclare const s: Script;\ndeclare const g: GDScript;\ndeclare const a: any;\nfunction relay(): any { return null; }\n`
+    + `n.set_script(new GDScript());\nn.set_script(g);\nn.set_script(a);\nn.set_script(relay());\n` // lines 8 to 11: silent
+    + `n.set_script(r);\nn.set_script(s);\nn.set_script(ResourceLoader.load("res://src/x.ts"));\n`; // lines 12 to 14: warn
+  const w = warningsOf({ [f]: src }, f);
+  const lines = w.map((x) => /:(\d+):\d+ /.exec(x)?.[1]).join(",");
+  check(lines === "12,13,14", "guard-set-script-silent-for-gdscript-and-any", `warned at lines ${lines}`);
+  // the kit's own file: building it must print no [tooling] line (it did, from the relay's set_script, before ticket 442)
+  const leakFree = join(import.meta.dir, "../../../src/lib/leak-free.ts");
+  if (existsSync(leakFree)) {
+    const lf = "/virtual/lib/leak-free.ts";
+    const lw = warningsOf({ [lf]: readFileSync(leakFree, "utf8") }, lf);
+    check(lw.length === 0, "guard-leak-free-ts-builds-without-warnings", lw.join(" | "));
+  } else console.log("INFO src/lib/leak-free.ts is not in this project: guard-leak-free-ts-builds-without-warnings skipped");
 }
 
 // -- Callable.create(owner, x) (mutants create-string-template, create-not-function)

@@ -1,6 +1,6 @@
 // Glue between Effect and Godot nodes. OPT-IN, Effect projects only: imports `godot` and `effect`, is NOT in
 // tools/toolchain-files.json and create-godotjs-bun --no-effect deletes it (like game-clock.ts).
-// Tested by starter/tests/effect-godot (and starter/tests/effect-time for the clock). Rules: starter/docs/DAILY.md.
+// Tested by starter/tests/effect-godot (and starter/tests/effect-time for the clock). Rules: docs/DAILY.md.
 // Everything uses explicit Callable.create so it behaves the same with or without the build plugin.
 // Callable.create(fn) twice with the same fn compares equal, so disconnect(Callable.create(fn)) finds the connection.
 import { Callable, is_instance_valid } from "godot";

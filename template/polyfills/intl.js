@@ -8,8 +8,8 @@
 // WHAT IT IS: Intl.NumberFormat, DateTimeFormat, Collator, PluralRules, ListFormat, RelativeTimeFormat, getCanonicalLocales, supportedLocalesOf,
 // for SIX locales: en-US, en-GB, de-DE, fr-FR, he-IL, ja-JP (and the bare tags en, de, fr, he, ja, which use that data). Any other locale
 // (en-AU, de-AT, fr-CA, sv, ...) is NOT supported: supportedLocalesOf leaves it out and a constructor falls back to en-US, as the spec says.
-// The locale data is DERIVED from Bun's ICU by tests/intl/tools/gen-data.ts (the block between the DATA markers), never typed by hand, and
-// tests/intl compares about 64,000 supported calls with Bun's native Intl (identical output), so what it prints is BUN's ICU, not necessarily V8's.
+// The locale data is DERIVED from Bun's ICU by starter/tests/intl/tools/gen-data.ts (the block between the DATA markers), never typed by hand, and
+// starter/tests/intl compares about 64,000 supported calls with Bun's native Intl (identical output), so what it prints is BUN's ICU, not necessarily V8's.
 // WHAT IT IS NOT: no time zone database. Zones: "UTC", "GMT", "Etc/UTC", "Etc/GMT" and fixed offsets ("+02:00", "-0530", "+05"); every
 // other zone name (Europe/Berlin, America/New_York...) throws RangeError rather than silently formatting in the wrong zone. With no
 // timeZone option the engine's local time is used (its own conversion, DST included; the name of a non-UTC local zone is unknown, so
@@ -464,7 +464,7 @@
   var W3 = { long: 4, short: 3, narrow: 5 };
   var TZC = { short: "z", long: "Z", shortOffset: "o", longOffset: "O" }; // zone-name class letters of the pattern data (signatures)
   // request signatures: the requested widths of the date fields (sigDate), of the time fields with the hour group and zone-name class
-  // (sigTime), and both together (sigOf). They key the data's pattern exceptions (D.dx, D.tx, D.fx); tests/intl/tools/gen-data.ts builds the
+  // (sigTime), and both together (sigOf). They key the data's pattern exceptions (D.dx, D.tx, D.fx); starter/tests/intl/tools/gen-data.ts builds the
   // same strings, keep them identical.
   var SW = { short: "s", long: "l", narrow: "n" }, SN = { numeric: "n", "2-digit": "2" }, SM = { numeric: "n", "2-digit": "2", short: "s", long: "l", narrow: "r" };
   function sc(v, m) { return v === undefined ? "-" : m[v]; }

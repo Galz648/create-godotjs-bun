@@ -1,7 +1,8 @@
 // The plugin's per-rewrite switches (ADR 0009). One boolean per source rewrite, all on by default.
 // Validation (warnings, scene checks, build errors) is not a rewrite and has no switch, with these exceptions, each a check
 // that can be turned off for code that must build anyway: `abortGuards` (build errors for calls that kill the engine),
-// `badConversions` (build errors for constructors that return garbage), `lostWrites`, `valueStrings` and `packedIteration` (warnings).
+// `badConversions` (build errors for constructors that return garbage), `lostWrites`, `valueStrings` and `packedIteration` (warnings),
+// `effectBarrel`, `leakCalls` and `inputVirtuals` (warnings, leak-checks.ts; one file opts out with `// godotjs-plugin-allow: <names>`).
 // Where a project sets them (later lines override earlier ones):
 //   1. package.json  "godotjs": { "plugin": { "connect": false } }   (the project's standing choice)
 //   2. env GODOTJS_NO_STORED=1                     (older test hook, same as GODOTJS_PLUGIN_OFF=stored)
@@ -31,11 +32,17 @@ export interface PluginRewrites {
   valueStrings: boolean;
   /** Warning for for...of, spread or `Array.from` of a Packed*Array (ticket 268, value-checks.ts). */
   packedIteration: boolean;
+  /** Warning for `import ... from "effect"`, the barrel (ticket 441, leak-checks.ts). */
+  effectBarrel: boolean;
+  /** Warning for `create_timer`, `create_tween`, `get_slide_collision`, `get_last_slide_collision` (the leak family; ticket 441). */
+  leakCalls: boolean;
+  /** Warning for an `_input` / `_unhandled_input` method on a class that extends a Godot class (the leak family; ticket 441). */
+  inputVirtuals: boolean;
 }
 
-export const REWRITE_NAMES = ["exports", "onready", "register", "stored", "connect", "abortGuards", "badConversions", "lostWrites", "valueStrings", "packedIteration"] as const satisfies readonly (keyof PluginRewrites)[];
+export const REWRITE_NAMES = ["exports", "onready", "register", "stored", "connect", "abortGuards", "badConversions", "lostWrites", "valueStrings", "packedIteration", "effectBarrel", "leakCalls", "inputVirtuals"] as const satisfies readonly (keyof PluginRewrites)[];
 
-export const DEFAULT_REWRITES: Readonly<PluginRewrites> = { exports: true, onready: true, register: true, stored: true, connect: true, abortGuards: true, badConversions: true, lostWrites: true, valueStrings: true, packedIteration: true };
+export const DEFAULT_REWRITES: Readonly<PluginRewrites> = { exports: true, onready: true, register: true, stored: true, connect: true, abortGuards: true, badConversions: true, lostWrites: true, valueStrings: true, packedIteration: true, effectBarrel: true, leakCalls: true, inputVirtuals: true };
 
 /** Defaults with `partial` applied. */
 export function withRewrites(partial: Partial<PluginRewrites> = {}): PluginRewrites {

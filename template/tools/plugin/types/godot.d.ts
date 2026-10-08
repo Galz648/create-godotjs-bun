@@ -31,6 +31,10 @@ export class Resource extends Object {}
 export class Script extends Resource {
   call(method: string, ...args: unknown[]): unknown;
 }
+export class GDScript extends Script {}
+export class ResourceLoader {
+  static load(path: string, typeHint?: string, cacheMode?: number): Resource;
+}
 
 export class Callable {
   static create(fn: (...args: never[]) => unknown): Callable;

@@ -63,3 +63,7 @@ scons platform=macos arch=arm64 target=editor use_quickjs_ng=yes skip_js_runtime
 ```
 
 Copy `bin/godot.macos.editor.arm64` aside (for example `bin/macos-editor-4.6.1-qjs-ng-srcmap/`, `bin/macos-editor-4.6.1-qjs-ng-clicklink/` once the script-error link patch is included, or `bin/macos-editor-4.6.1-qjs-ng-model/` once the `@onready` prelude patch and later model fixes are included). Do not replace the stock universal binary. Do not overwrite a binary the editor is already running. Do not overwrite the `srcmap` or `clicklink` binaries.
+
+## Candidates, not adopted
+
+- `godotjs-leak-refcount.patch` (ticket 360, one line in `bind_godot_object`; applies on stock b1d8b3f, independent of 1 to 12). Measured in `docs/design/leak-patch-measured.md`: it removes the leak family, but ALONE it makes `effect-boundary` and the platformer port abort (`swap_free_queue` re-entrancy). Needs the re-entrancy guard in `patches/godotjs-swap-free-queue-reentrancy.patch.experiment` (QuickJS only, unreviewed experiment, not applied by any recipe above). Not applied in `GodotJS/`; no binary in `bin/`.

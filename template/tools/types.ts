@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { requireGodot } from "./config.ts";
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { inputActions } from "./typings-hint.ts";
 
 const root = join(import.meta.dir, "..");
 const typings = join(root, "typings");
@@ -84,3 +85,12 @@ if ((result.status ?? 1) !== 0) {
 
 parkShim();
 ensureGdignore();
+// The engine prints shutdown noise even on success (`RID allocations ... leaked at exit`, `resources still in use at exit`,
+// `undefined class AnimatedValuesBackup`): end with one line that says whether the typings are there (ticket 440).
+const gen = join(typings, "godot0.gen.d.ts");
+if (!existsSync(gen)) {
+  console.error("typings FAILED: typings/godot0.gen.d.ts was not written (see the engine output above)");
+  process.exit(1);
+}
+const actions = inputActions(readFileSync(gen, "utf8")).size;
+console.log(`typings OK: typings/godot*.gen.d.ts written (${actions} input actions). Leak and "still in use at exit" lines above are the engine's shutdown noise.`);

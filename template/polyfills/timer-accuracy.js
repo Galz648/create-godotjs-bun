@@ -14,7 +14,7 @@
 // small object (like the first-frame guard's): clearTimeout / clearInterval take it (either of the two clears either kind), and
 // handles of the previous implementation still work. If the engine's wheel is fixed (ratio 1) the correction vanishes by itself.
 // Not changed: callbacks still run at a frame start (up to one frame late), the game clock (src/lib/game-clock.ts) is still the tool
-// for frame-accurate and pausable time. Tested: tests/timer-accuracy (engine) and tests/timer-accuracy/semantics.test.ts (bun).
+// for frame-accurate and pausable time. Tested: starter/tests/timer-accuracy (engine) and starter/tests/timer-accuracy/semantics.test.ts (bun).
 (() => {
   const g = globalThis;
   if (g.__jsbTimerAccuracy || typeof g.setTimeout !== "function") return;

@@ -11,7 +11,7 @@
 // metric whose slope (units per x) is above its budget. Slopes, not first-vs-last: a sawtooth (GC, pools) averages out,
 // a steady leak does not. A budget is an amount per x unit: with x in game minutes, `objects: 20` means "at most 20
 // engine objects more per minute of play", 1,200 per hour. Pick budgets from a clean run's slope plus headroom, and
-// prove each one with a deliberate leak that must trip it (tests/soak does that for every metric here).
+// prove each one with a deliberate leak that must trip it (starter/tests/soak does that for every metric here).
 // engineMetrics() reads Performance monitors and `ps` RSS; `rss_mb` is absent where `ps` is unavailable (exports, Windows).
 // Design and measured numbers: docs/design/soak.md.
 

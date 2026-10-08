@@ -2,6 +2,26 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com). Versions follow [Semantic Versioning](https://semver.org); before 1.0 a minor bump (0.x.0) adds features or may change behaviour, a patch bump (0.x.y) is fixes only.
 
+## 0.5.2
+
+Found by a rehearsal: a developer who had never seen the project scaffolded 0.5.1 and built a complete small game from the shipped docs only (73 minutes to first playable, 80 to an exported macOS zip). These are the frictions it hit.
+
+### Added
+- **Build warnings for the engine's leak family and the barrel import** (warnings only; switches `effectBarrel`, `leakCalls`, `inputVirtuals`; off per project in `package.json` `godotjs.plugin` or per file with `// godotjs-plugin-allow: <switches>`): `import ... from "effect"` (use subpaths), `create_timer`, `create_tween`, `get_slide_collision`, `get_last_slide_collision`, and `_input` / `_unhandled_input` on a script class.
+- **`bun run build` and `bun run typecheck` say what to do after you change the InputMap**: `hint: input action(s) X ... run bun run types`.
+- **`bun run export:macos --game-args "--autoplay"`** passes arguments to the export's smoke runs, so a game behind a menu is checked past the menu.
+- **`bun run dev` relaunches into the scene you are editing** (`--main-scene` turns it off, `--scene res://x.tscn` sets the first launch).
+- `docs/PLUGIN-REWRITES.md` ships in the scaffold; a package-gate check fails if any shipped doc names a file the scaffold does not have.
+
+### Fixed
+- **The cookbook and the services kit taught `_input(ev) { bridge.handle(ev) }`**, the form that leaks one engine object per event; they now use `onInputEvent` from `leak-free.ts`, and the tiny game loop uses the frame clock.
+- The kit's own `leak-free.ts` no longer triggers a false `set_script()` warning on every build.
+- **Dev state is no longer lost** when a module throws at load.
+- The engine test runner names only the failing files and resets `tree.paused` and `Engine.time_scale` between tests.
+
+### Docs
+- Several scenes (where the polyfill import and `hotReload()` go), which clock to use (wall, game, frame), `GODOT_ARGS`, `bun run headless -- -- <args>`, the shared `user://` folder, and when to rerun `bun run types`.
+
 ## 0.5.1
 
 ### Fixed

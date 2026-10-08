@@ -1,5 +1,5 @@
 // The Bun plugin as a whole (index.ts) and the switch reader (options.ts), which the other sections reach only through
-// transformSourceFile. Found unchecked by the mutation pass (tools/mutate.ts, docs/design/mutation-pass.md); each case names its mutant.
+// transformSourceFile. Found unchecked by the mutation pass (tools/mutate.ts and docs/design/mutation-pass.md in godotjs-esm); each case names its mutant.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";

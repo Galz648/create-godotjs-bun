@@ -35,9 +35,9 @@
   var exports_jsb_polyfill = {};
   var g = globalThis;
   // Bun and Node have `global`; the engine does not. About 4,500 library tests (test scaffolding such as sinon and chai plugins) failed on this alone
-  // (tests/real-libs, 65% to 88% of bun's passes). Guarded: an existing `global` is kept.
+  // (starter/tests/real-libs, 65% to 88% of bun's passes). Guarded: an existing `global` is kept.
   if (typeof g.global === "undefined") g.global = g;
-  // Needed (measured 2026-10-07, piece removed in a scratch copy): without TextEncoder/TextDecoder tests/effect-core hits the
+  // Needed (measured 2026-10-07, piece removed in a scratch copy): without TextEncoder/TextDecoder starter/tests/effect-core hits the
   // 150 s timeout and the dev-state demo fails its readiness lines. The engine has neither.
   if (typeof g.TextEncoder === "undefined") {
     g.TextEncoder = class TextEncoder {
@@ -226,7 +226,7 @@
       }
     };
   }
-  // Needed: without AbortSignal/AbortController tests/effect-core run-modes fails (runFork abort signal) and the bun differential
+  // Needed: without AbortSignal/AbortController starter/tests/effect-core run-modes fails (runFork abort signal) and the bun differential
   // disagrees. DOMException is not here any more: the engine provides it (archived: legacy/polyfills/domexception.2026-10-07.js).
   if (typeof g.AbortSignal === "undefined") {
     const kCreate = Symbol("create");
@@ -281,8 +281,8 @@
       }
     };
   }
-  // Needed for speed: no engine test group fails without it, so tests/polyfill asserts it (150 chained setImmediate calls: about
-  // 1 ms here, 1630 ms with the engine's own setImmediate; control in tests/polyfill/src/control.ts).
+  // Needed for speed: no engine test group fails without it, so starter/tests/polyfill asserts it (150 chained setImmediate calls: about
+  // 1 ms here, 1630 ms with the engine's own setImmediate; control in starter/tests/polyfill/src/control.ts).
   if (!g.__jsbFastImmediate) {
     g.__jsbFastImmediate = true;
     const nativeSetTimeout = g.setTimeout;
@@ -330,7 +330,7 @@
     // The engine's timer wheel starts at 0 and its first update advances it by the whole engine uptime (about
     // 200 ms headless, seconds in a windowed game), so a timer armed in the first frame (_ready of the main scene)
     // that is shorter than that fires at once. Hold timers armed before the first update until it has run.
-    // Measured: tests/effect-time. Costs one callback and no per-timer overhead after the first frame.
+    // Measured: starter/tests/effect-time. Costs one callback and no per-timer overhead after the first frame.
     g.__jsbTimerGuard = true;
     const nativeSet = g.setTimeout;
     const nativeClear = g.clearTimeout;
@@ -365,14 +365,14 @@
     [g.setTimeout, g.clearTimeout] = guard(nativeSet, nativeClear);
     [g.setInterval, g.clearInterval] = guard(nativeSetInterval, nativeClearInterval);
   }
-  // Needed: without it tests/effect-core (cause, logger, differential) and tests/effect-godot fail, and tests/polyfill checks it.
+  // Needed: without it starter/tests/effect-core (cause, logger, differential) and starter/tests/effect-godot fail, and starter/tests/polyfill checks it.
   if (!g.__jsbStackHeader) {
     g.__jsbStackHeader = true;
     // The wrapper's own frame is the top frame of every stack. It used to be matched by the literal name "Wrapped", but
     // the dev identifier renamer and --minify rename that binding (to "D", "H", ...), which left
     // `at D (polyfills/web-globals.js:314)` on top of every stack. Now the wrapper's name is set explicitly (and
     // Error.name reads right again), so the frame is `at <ctor name> (` whatever the build does to identifiers. Only
-    // leading frames are dropped, so a user frame further down is never touched. Measured: tests/polyfill.
+    // leading frames are dropped, so a user frame further down is never touched. Measured: starter/tests/polyfill.
     const wrapperFrames = [];
     const fix = (e) => {
       try {
@@ -412,7 +412,7 @@
   if (typeof g.console !== "undefined" && !g.console.__jsbConsoleStandIns) {
     // The engine console has log, info, warn, error, debug, trace, time, timeEnd, assert only. Effect's
     // Logger.consolePretty() calls group/groupCollapsed/groupEnd on every line and threw "not a function".
-    // Each stand-in is installed only when the method is missing. Measured: tests/effect-core (console-pretty).
+    // Each stand-in is installed only when the method is missing. Measured: starter/tests/effect-core (console-pretty).
     // Not handled: the browser-mode pretty logger prints raw %c and CSS text (the engine console does not
     // interpret %c); use Logger.consolePretty({ mode: "tty", colors: false }) in a game.
     const c = g.console;
@@ -443,7 +443,7 @@
   }
   // Symbol.dispose / Symbol.asyncDispose (explicit resource management): the engine has neither. Bun's `using` helper falls back to
   // Symbol.for("Symbol.dispose") (it runs before this file), so the registered symbols are used: `using` and [Symbol.dispose] then agree.
-  // Difference from Bun, on purpose: Symbol.keyFor(Symbol.dispose) is "Symbol.dispose" here and undefined in Bun (tested by tests/bun-parity).
+  // Difference from Bun, on purpose: Symbol.keyFor(Symbol.dispose) is "Symbol.dispose" here and undefined in Bun (tested by starter/tests/bun-parity).
   if (typeof Symbol.dispose === "undefined") Object.defineProperty(Symbol, "dispose", { value: Symbol.for("Symbol.dispose") });
   if (typeof Symbol.asyncDispose === "undefined") Object.defineProperty(Symbol, "asyncDispose", { value: Symbol.for("Symbol.asyncDispose") });
   // No test needs this (removing it changes no result in effect-core, effect-godot, effect-time, hot-reload, dev-state), but

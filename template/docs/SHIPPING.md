@@ -32,7 +32,10 @@ bun run export:macos --no-zip              # no archive step
 bun run export:macos --expect "game ready" # the debug-build log must contain this text
 bun run export:macos --no-smoke            # build + export + pack check only; the app is NOT run
 bun run export:macos --frames 600          # how long the debug-build run lasts (default 300 frames)
+bun run export:macos --game-args "--autoplay" --expect "[game] wave 1"   # drive a game past its menu in both app runs
 ```
+
+**A game behind a menu.** Both app runs start at the main scene, so by default the checks see only your menu: the release probe reports at frame 15 and the debug run's `--expect` can only find menu lines (the release check then prints `note: only the main scene ran; N other scene(s) with .ts scripts ... were never reached`). Give your game a flag that plays it without input (an autoplay bot, or "start the game scene at once") and pass it with `--game-args "--autoplay"`: the text goes after `--` on both runs (your game reads it with `OS.get_cmdline_user_args()`), the release probe reports again at the last frame (`--frames`, default 300, and it keeps counting while your game pauses its tree), and `--expect` can assert a line from the game scene. A game that quits by itself before that keeps the frame-15 report.
 
 Output: `out/<project name>.app` (gitignored; universal arm64 + x86_64; about 140 MB).
 The command needs, once per machine:
@@ -75,14 +78,14 @@ The command prints one PASS or FAIL line per check and an overall `EXPORT PASS` 
 | Check | What it does | Shows | Does NOT show |
 |---|---|---|---|
 | **bundle in pack** (always) | Reads the file table of the exported `.pck`: every `*.ts.remap` has its compiled `.js` in the pack, byte-identical in size to the build output; no tooling files (`tools/`, `typings/`, `docs/`, ...) leaked in | The scripts really are inside the app, and the pack holds what the build produced | That the engine can run them |
-| **release app runs the game** (skipped by `--no-smoke`) | Copies the exported release `.app` to a temp directory, puts an `override.cfg` beside its executable that autoloads `tools/smoke/probe.gd` (a file outside the app and the pack), runs it `--headless`, and reads a JSON report the probe writes after 15 frames: exit status 0, `debug_build` false, the main scene loaded, every `.ts` script node found in the tree can instantiate, and no `ERROR` / `WARNING` / `[jsb]` line on the console | The release template itself, with your pack, loads the main scene and its GodotJS scripts and runs frames. The shipped `.app` is never modified; your game's scripts are not touched | Anything about gameplay after frame 15, rendering (headless has no window), a game that attaches scripts later than 15 frames (it prints a note), or the signed/notarized app (this tests the unsigned one) |
+| **release app runs the game** (skipped by `--no-smoke`) | Copies the exported release `.app` to a temp directory, puts an `override.cfg` beside its executable that autoloads `tools/smoke/probe.gd` (a file outside the app and the pack), runs it `--headless`, and reads a JSON report the probe writes after 15 frames (and again at the last frame with `--game-args`): exit status 0, `debug_build` false, the main scene loaded, every `.ts` script node found in the tree can instantiate, and no `ERROR` / `WARNING` / `[jsb]` line on the console | The release template itself, with your pack, loads the main scene and its GodotJS scripts and runs frames. The shipped `.app` is never modified; your game's scripts are not touched | Anything about gameplay after frame 15 (without `--game-args`), rendering (headless has no window), a game that attaches scripts later than 15 frames (it prints a note), or the signed/notarized app (this tests the unsigned one) |
 | **debug app log** (skipped by `--no-smoke`) | Exports a DEBUG build of the same project to a temp directory, runs it headless for `--frames` frames, and reads the console: engine started, exit 0, no `ERROR` / `SCRIPT ERROR` / `[jsb][Error]` / `Failed loading` line, and (if `--expect "text"` is given) the text appears | Your own JS logging (the release template prints no JS console, the debug one does): use `--expect` to assert a line your game prints | That the RELEASE binary behaves the same; it is a different binary running the same pack |
 
 Notes on honesty:
 
 - Godot's exit status is **not** a failure signal here. With a broken pack (scripts excluded) both binaries still exit 0 and
   only print `ERROR: Failed loading scene` lines; that is why the checks read the console and the probe, not just the exit code.
-  This was tried: with `src/scripts/main.ts` excluded, all three checks printed FAIL.
+  This was tried in godotjs-esm: with a script excluded from the pack, all three checks printed FAIL.
 - Running the app runs your game headless for a moment. If your game writes to `user://` at startup, it will write there during the check.
 - `--no-smoke` runs nothing. Its `EXPORT PASS` means only "the pack looks right".
 - Not checked at all: that the app opens a window and renders on a real machine, audio, input, controller support.

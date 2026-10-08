@@ -6,6 +6,7 @@ import "./self-check/registration.ts";
 import "./self-check/diagnostics.ts";
 import "./self-check/abort-guards.ts";
 import "./self-check/value-checks.ts";
+import "./self-check/leak-checks.ts";
 import "./self-check/scenes.ts";
 import "./self-check/stored.ts";
 import "./self-check/rewrites.ts";

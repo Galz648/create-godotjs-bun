@@ -1,9 +1,10 @@
-// Game services kit: Input, a Stream of action events plus `isPressed`, fed from a node's `_input`. OPT-IN, Effect projects
+// Game services kit: Input, a Stream of action events plus `isPressed`, fed from a node's input events. OPT-IN, Effect projects
 // only (not in tools/toolchain-files.json, removed by create-godotjs-bun --no-effect). Imports Effect by subpath.
 // Tested by starter/tests/effect-services (logic.test.ts with the test bridge, the engine scene with parse_input_event).
 //
 //   const input = makeInputBridge(["jump", "fire", "move_left"]);       // InputMap actions that exist
-//   class Player extends Node { _input(ev) { input.handle(ev); } }       // the node forwards its events
+//   class Player extends Node { _ready() { onInputEvent(this, (ev) => input.handle(ev)); } }   // src/lib/leak-free.ts; NOT an
+//                                                                        // _input method (it leaks one engine object per event)
 //   program.pipe(Effect.provide(Input.layer(input)));                    // tests: Input.testLayer(bridge), bridge.press("jump")
 //   const events = yield* (yield* Input).subscribe;                      // a Stream of { action, pressed, strength }
 //
@@ -52,7 +53,7 @@ export interface RawInputEvent {
 
 export interface InputBridge {
   readonly layer: Layer.Layer<Input>;
-  /** Forward a node's `_input(ev)` here. Returns how many action events it published. */
+  /** Forward a node's input events here (`onInputEvent(node, (ev) => bridge.handle(ev))`). Returns how many action events it published. */
   handle(ev: RawInputEvent): number;
   /** Publish an action event directly (what `handle` does per matching action). Tests use this, or press / release. */
   publish(ev: InputActionEvent): void;
@@ -98,7 +99,7 @@ export function makeInputBridge(actions: readonly string[], options: { readonly 
 }
 
 export class Input extends Context.Service<Input, InputShape>()("game.Input") {
-  /** Live: the service fed by `bridge.handle(ev)` from a node's `_input`. */
+  /** Live: the service fed by `bridge.handle(ev)` from a node's `onInputEvent` relay. */
   static layer = (bridge: InputBridge): Layer.Layer<Input> => bridge.layer;
   /** Test: the same service with a bridge the test pushes into (`bridge.press("jump")`); no engine, no frame delay. */
   static testLayer = (bridge: InputBridge = makeInputBridge([])): Layer.Layer<Input> => bridge.layer;

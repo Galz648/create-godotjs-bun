@@ -2,7 +2,8 @@
 // tools/toolchain-files.json, removed by create-godotjs-bun --no-effect). Imports Effect by subpath.
 //
 //   import { GameServicesLive, Settings, Input, makeInputBridge } from "./lib/services";
-//   const input = makeInputBridge(["jump", "fire"]);                 // _input(ev) { input.handle(ev) } in one node
+//   const input = makeInputBridge(["jump", "fire"]);                 // in one node's _ready: onInputEvent(this, (ev) => input.handle(ev))
+//                                                                    // (src/lib/leak-free.ts; an _input method leaks one engine object per event)
 //   const layer = GameServicesLive({ input, audio: { parent: this, sounds: { click: "res://click.wav" } }, seed: 42 });
 //   Effect.runFork(game.pipe(Effect.provide(layer)));                  // needs a Scope for the audio pool: Layer.build in a nodeScope
 //
@@ -27,7 +28,7 @@ export * from "./random";
 export * from "./settings";
 
 export interface GameServicesOptions {
-  /** The bridge the node's `_input` feeds (see makeInputBridge). */
+  /** The bridge a node feeds through `onInputEvent(node, (ev) => bridge.handle(ev))` (see makeInputBridge). */
   readonly input: InputBridge;
   readonly audio: AudioLayerOptions;
   /** Seed of the game's Random (a number or a string). */

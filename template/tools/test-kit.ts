@@ -18,17 +18,20 @@ export interface TestContext {
   nextFrame(): Promise<void>;
 }
 type Body = (ctx: TestContext) => unknown;
-type Case = { name: string; fn?: Body; timeout: number };
+type Case = { name: string; fn?: Body; timeout: number; file: string };
 const cases: Case[] = [];
 const prefix: string[] = [];
 const DEFAULT_TIMEOUT_MS = 5000;
+let currentFile = "";
+/** tools/test.ts calls this before it loads each test file, so a failure can name its file. */
+export function beginFile(file: string): void { currentFile = file; }
 
 export function describe(name: string, body: () => void): void {
   prefix.push(name);
   try { body(); } finally { prefix.pop(); }
 }
 function register(name: string, fn: Body | undefined, timeout = DEFAULT_TIMEOUT_MS): void {
-  cases.push({ name: [...prefix, name].join(" > "), fn, timeout });
+  cases.push({ name: [...prefix, name].join(" > "), fn, timeout, file: currentFile });
 }
 type EffectRunner = (effect: any) => Promise<unknown>;
 let runEffect: EffectRunner | undefined;
@@ -110,8 +113,19 @@ const withTimeout = <T>(p: Promise<T>, ms: number, name: string): Promise<T> =>
 
 /** Run every registered test under `root` and print TAP through `log`. Resolves to the exit code: 0 when all passed, else 1. */
 export async function runAll(log: (line: string) => void, root: Node): Promise<number> {
-  const tree = root.get_tree() as unknown as { process_frame: { as_promise(): Promise<unknown> } };
+  const tree = root.get_tree() as unknown as { process_frame: { as_promise(): Promise<unknown> }; paused: boolean };
   const nextFrame = async (): Promise<void> => { await tree.process_frame.as_promise(); };
+  // Every test starts unpaused at time_scale 1, whatever the one before it left (ticket 447). GODOTJS_TEST_NO_RESET=1 skips
+  // the reset: only the negative control of starter/tests/test-kit-isolation uses it.
+  const engine = require("godot") as { Engine: { time_scale: number }; OS: { get_environment(name: string): string } };
+  const reset = engine.OS.get_environment("GODOTJS_TEST_NO_RESET") !== "1";
+  const restore = (name: string): void => {
+    const left = [tree.paused ? "tree.paused = true" : "", engine.Engine.time_scale !== 1 ? `Engine.time_scale = ${engine.Engine.time_scale}` : ""].filter(Boolean);
+    if (!reset || left.length === 0) return;
+    tree.paused = false;
+    engine.Engine.time_scale = 1;
+    log(`  # reset after "${name}": it left ${left.join(" and ")}`);
+  };
   log(`TAP version 13\n1..${cases.length}`);
   let failed = 0;
   for (const [i, c] of cases.entries()) {
@@ -126,9 +140,10 @@ export async function runAll(log: (line: string) => void, root: Node): Promise<n
       }
     } catch (e) {
       failed++;
-      log(`not ok ${i + 1} - ${c.name}\n  # ${String((e as Error)?.message ?? e).split("\n")[0]}`);
+      log(`not ok ${i + 1} - ${c.name}\n  # ${String((e as Error)?.message ?? e).split("\n")[0]}${c.file ? `\n  # in ${c.file}` : ""}`);
     } finally {
       for (const n of added) n.queue_free();
+      restore(c.name);
     }
   }
   log(`# ${cases.length - failed} passed, ${failed} failed`);

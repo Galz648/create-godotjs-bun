@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { composeOutputMap, createSession } from "./plugin/index.ts";
+import { staleTypingsHint } from "./typings-hint.ts";
 
 // Scripts run from the project root; resolve against it anyway so a move into tools/ cannot shift outdir or entrypoints.
 const ROOT = join(import.meta.dir, "..");
@@ -54,7 +55,7 @@ export function sharedModuleWarnings(root: string, entries: string[]): string[] 
 // the renamer every decorated class in a bundle (same file or imported) gets the SAME `_init` (and the same
 // per-accessor WeakMap names): the last class wins and accessors break ("never initialised"). The renamer makes them
 // unique. Cost: class names are mangled in dev stack frames (method names and mapped positions are intact).
-// GODOTJS_NO_MINIFY_IDS=1 turns it off: negative control for tests/decorators-multi, or to see real class names
+// GODOTJS_NO_MINIFY_IDS=1 turns it off: negative control for starter/tests/decorators-multi, or to see real class names
 // when debugging a project with one decorated class. See docs/design/cross-file-decorators.md.
 export const DEV_MINIFY = { identifiers: true } as const; // also what the bundle self-check builds with
 function minifyOption(): boolean | { identifiers: boolean } {
@@ -85,13 +86,13 @@ export async function buildProject(root: string, extraEntries: string[] = []): P
     plugins: [session.plugin],
     // `import.meta` is a syntax error in the CJS script the engine loads, and Effect's ConfigProvider.fromEnv contains
     // `import.meta?.env`, which Bun keeps in CJS output: a bundle using Config would not load ("import.meta only valid in
-    // module code"). `{}` makes it `{}?.env`, which is undefined, as it is off Node. tests/build-warnings checks this.
+    // module code"). `{}` makes it `{}?.env`, which is undefined, as it is off Node. starter/tests/build-warnings checks this.
     define: { "import.meta": "{}" },
   });
   if (!result.success) { for (const l of result.logs) console.error(l); return false; }
   // Bun reports a missing export as a WARNING and still emits `undefined(...)` (the game then fails at load with
   // "not a function"; tsc catches it too, but only if someone runs it). Treat that one as a build failure and show
-  // every other warning. Ticket 13, tests/build-warnings.
+  // every other warning. Ticket 13, starter/tests/build-warnings.
   // Bun 1.3.11 reports level "warn" at runtime although its types say "warning": accept both.
   const warnings = result.logs.filter((l) => (l.level as string) === "warn" || l.level === "warning");
   for (const l of warnings) console.warn(l);
@@ -119,8 +120,12 @@ export async function buildProject(root: string, extraEntries: string[] = []): P
     if (!out.path.endsWith(".js")) continue;
     console.log(`built ${relative(root, out.path)} (${(out.size / 1024).toFixed(0)} KB)`);
   }
+  const hint = staleTypingsHint(root); // once per change, not on every save of a watch build (ticket 440)
+  if (hint && hint !== lastHint) console.warn(hint);
+  lastHint = hint;
   return true;
 }
+let lastHint: string | null = null;
 
 export async function build(): Promise<boolean> {
   return buildProject(ROOT);

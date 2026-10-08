@@ -2,16 +2,32 @@
 # tools/export.ts copies the exported release app to a temp directory, drops an override.cfg next to
 # its executable that autoloads this file, runs it headless, and reads the JSON written here.
 # The shipped .app and its pack are never modified. Needs GODOTJS_SMOKE_OUT (path of the JSON file).
+# The report is written at frame 15. With GODOTJS_SMOKE_FRAMES=N (N > 15; `--game-args` sets it) it is written again at
+# frame N, then the probe quits; a game that quits by itself before N keeps the frame-15 report.
 extends Node
 
-const FRAMES := 15
+const FIRST := 15
 var _frame := 0
+var _last := FIRST
+
+func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS # count frames (and quit) even while the game pauses its tree
+	var n := OS.get_environment("GODOTJS_SMOKE_FRAMES")
+	if n.is_valid_int() and int(n) > FIRST:
+		_last = int(n)
 
 func _process(_delta: float) -> void:
 	_frame += 1
-	if _frame < FRAMES:
+	if _frame == FIRST:
+		_report()
+	if _frame < _last:
 		return
+	if _frame > FIRST:
+		_report()
 	set_process(false)
+	get_tree().quit(0)
+
+func _report() -> void:
 	var tree := get_tree()
 	var scene := tree.current_scene
 	var js_nodes: Array = []
@@ -35,7 +51,6 @@ func _process(_delta: float) -> void:
 		if f != null:
 			f.store_string(JSON.stringify(report))
 			f.close()
-	tree.quit(0)
 
 func _script_path(node: Node) -> String:
 	var s: Script = node.get_script()

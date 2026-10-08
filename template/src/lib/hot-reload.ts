@@ -7,6 +7,8 @@
 // retyped property, an added plain field, signals, base, engine virtuals) and gives accessors the swap ADDED their default (stage 2, below).
 // Design: docs/design/hot-reload.md.
 
+import { devStateListen } from "./dev-state";
+
 const engine = require("godot") as {
   OS: { get_environment(name: string): string };
   FileAccess: {
@@ -214,6 +216,7 @@ function poll(): void {
 /** Call once from a script that lives for the whole run (the main scene root). Idempotent across reloads of the caller. */
 export function hotReload(): void {
   if (dir === "") return;
+  devStateListen(); // answer save requests even in a scene with no devState(): the runner learns the scene to relaunch into
   const g = globalThis as any;
   // One interval for the whole process. The newest module evaluation replaces the handler, so a reloaded caller runs new code.
   // lastToken lives on the same shared object, so a reloaded caller does not replay the request that reloaded it,

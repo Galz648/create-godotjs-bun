@@ -1,6 +1,6 @@
 # Effect cookbook for a whole game
 
-Effect projects only. Every section is one idiom a small real-time game needs, in the same shape: **Rule**, code, **Verified by** (a named test with a negative control), **Trap**. A status word heads each section: `VERIFIED` means every claim in it is pinned by a named test; `PARTLY` means the mechanism is pinned but not in exactly this use, and the section says what is missing. Every ` ```ts ` block here is type-checked by `bun tools/check-docs-snippets.ts` (part of `bun tools/verify.ts --quick`); a block that is intentionally partial says so on its first line. Catalogue, matrices and gaps: `docs/design/effect-game-patterns.md`. Daily rules (hot reload, closures): `docs/DAILY.md`.
+Effect projects only. Every section is one idiom a small real-time game needs, in the same shape: **Rule**, code, **Verified by** (a named test with a negative control), **Trap**. A status word heads each section: `VERIFIED` means every claim in it is pinned by a named test; `PARTLY` means the mechanism is pinned but not in exactly this use, and the section says what is missing. Every ` ```ts ` block here is type-checked in godotjs-esm by `bun tools/check-docs-snippets.ts` (part of `bun tools/verify.ts --quick`); a block that is intentionally partial says so on its first line. Catalogue, matrices and gaps: `docs/design/effect-game-patterns.md`. Daily rules (hot reload, closures): `docs/DAILY.md`.
 
 ## Start here
 
@@ -8,7 +8,7 @@ The five rules that matter most (each is measured, see the sections):
 
 | # | Rule | Why | Section |
 |---|---|---|---|
-| 1 | Import Effect by subpath: `import * as Effect from "effect/Effect"`, never `from "effect"` | the barrel pulls the whole library into every script bundle (48 ms and 3.3 MiB per bundle) | 21 |
+| 1 | Import Effect by subpath: `import * as Effect from "effect/Effect"`, never `from "effect"` (the build warns: switch `effectBarrel`) | the barrel pulls the whole library into every script bundle (48 ms and 3.3 MiB per bundle) | 21 |
 | 2 | Every service has a unique string key: `Context.Service<Foo, Shape>()("game.Foo")` | two services with the same key silently replace each other | 21 |
 | 3 | At the edges use `runLogged` / `forkLogged`, and add `catchCause` to node fibers | bare `runFork` fails silently, bare `runPromise` prints no stack; `forkOnNode` does not log | 15 |
 | 4 | Convert data with `Schema.toCodecJson` before it crosses into Godot | `Map`, `Set`, `Date`, `Option` and class instances throw or lose their type at the boundary | 23 |
@@ -16,7 +16,7 @@ The five rules that matter most (each is measured, see the sections):
 
 Also: `freeNode` not `queue_free`, closures call `this.method()` (hot reload), at most 4 ms of Effect per frame, per-entity math stays a plain loop.
 
-### A tiny game loop (the services kit, `godot-effect.ts`, `game-clock.ts`)
+### A tiny game loop (the services kit, `godot-effect.ts`, `frame-clock.ts`, `leak-free.ts`)
 
 An arena where `fire` shoots with a sound, a wave spawns every two game seconds at a seeded random position, and the score is folded once per frame. It uses Settings, Input, Assets, Audio, Random (GodotConfig is in the same `GameServicesLive`; read flags with `Config.Boolean`, section 14b).
 
@@ -24,13 +24,12 @@ An arena where `fire` shoots with a sound, a wave spawns every two game seconds 
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { Button, InputEvent, Label, Node2D } from "godot";
-import { makeGameClock } from "./lib/game-clock";
+import { Button, Label, Node2D } from "godot";
+import { makeFrameClock } from "./lib/frame-clock";
 import { Frames, forkOnNode, nodeScope, signalStream } from "./lib/godot-effect";
+import { onInputEvent } from "./lib/leak-free";
 import { Assets, Audio, GameServicesLive, Input, Random, Settings, makeInputBridge } from "./lib/services";
 
 const Score = Schema.Struct({ points: Schema.Number });          // plain data: it can go to the save and across the boundary
@@ -45,28 +44,27 @@ const run = (arena: Arena) => Effect.gen(function* () {         // closures call
   yield* Effect.forkChild(keys.pipe(
     Stream.filter((e) => e.action === "fire" && e.pressed),
     Stream.runForEach(() => audio.play("shot").pipe(Effect.andThen(Effect.sync(() => arena.shoot()))))));
-  yield* Effect.forkChild(Effect.repeat(                          // on GAME time: frozen while paused
-    Effect.gen(function* () { arena.spawn(yield* rng.int(0, 640)); }), Schedule.spaced(2000)));
+  yield* Effect.forkChild(Effect.repeat(                          // on GAME time: frozen while paused, exact under --fixed-fps
+    Effect.gen(function* () { arena.spawn(yield* rng.int(0, 640)); }), arena.clock.timer(2000)));
   yield* Effect.forkChild(signalStream(arena.restart.pressed).pipe(Stream.runForEach(() => Effect.sync(() => arena.reset()))));
   yield* arena.frames.processStream.pipe(Stream.runForEach(() => Effect.sync(() => arena.flush())));   // ONE fold per frame
 });
 
 class Arena extends Node2D {
   frames = new Frames();
+  clock = makeFrameClock();                                       // counts frame deltas, like a Timer node (DAILY.md "Which clock")
   bridge = makeInputBridge(["fire"]);
   label!: Label;
   restart!: Button;
   points = 0;
   hits = 0;                                                       // plain counters: events add here, flush() folds them
-  _process(d: number) { this.frames.process(d); }
-  _input(ev: InputEvent) { this.bridge.handle(ev); }
+  _process(d: number) { this.clock.advance(d); this.frames.process(d); }
   _ready() {
     const ns = nodeScope(this);                                   // closes when this node leaves the tree
-    const clock = makeGameClock(this.get_tree());
-    Effect.runSync(Scope.addFinalizer(ns.scope, Effect.sync(() => clock.dispose())));   // runs AFTER the fibers are interrupted
+    onInputEvent(this, (ev) => this.bridge.handle(ev));           // NOT an _input method: that leaks one engine object per event
     const services = GameServicesLive({ input: this.bridge, audio: { parent: this, sounds: { shot: "res://shot.wav" } }, seed: 42 });
     forkOnNode(ns, run(this).pipe(
-      Effect.provide(services), Effect.provideService(Clock.Clock, clock),
+      Effect.provide(services), Effect.provideService(Clock.Clock, this.clock),
       Effect.catchCause((c) => Effect.sync(() => console.log(`ERROR [arena] ${Cause.pretty(c)}`)))));
   }
   shoot() { this.hits += 1; }
@@ -129,12 +127,12 @@ class Arena extends Node2D {
 
 ## 2. Input as a Stream
 
-VERIFIED. **Rule:** the node forwards `_input(ev)` to the kit's bridge; programs subscribe to a Stream of `{ action, pressed, strength }`. Held movement (`Input.get_vector`) is read in the frame fiber, not as a stream.
+VERIFIED. **Rule:** the node forwards its input events to the kit's bridge through `onInputEvent` (`src/lib/leak-free.ts`; an `_input` method on a script class leaks one engine object per event, DAILY.md leak table); programs subscribe to a Stream of `{ action, pressed, strength }`. Held movement (`Input.get_vector`) is read in the frame fiber, not as a stream.
 
 ```ts
 class Player extends CharacterBody2D {
   bridge = makeInputBridge(["jump", "fire"]);          // actions that exist in the InputMap
-  _input(ev: InputEvent) { this.bridge.handle(ev); }   // copies plain fields, keeps no engine object
+  _ready() { onInputEvent(this, (ev) => this.bridge.handle(ev)); }   // a freed copy of each event; handle keeps plain fields
 }
 const jumps = Effect.gen(function* () {
   const events = yield* (yield* Input).subscribe;      // from this moment, unbounded, nothing dropped
@@ -145,7 +143,7 @@ const jumps = Effect.gen(function* () {
 
 **Verified by:** ES engine `input-event-arrives-next-frame-as-a-stream-element`, `input-500-events-in-one-frame-none-dropped` (control: a sliding bridge keeps 64), `input-real-key-event-through-the-inputmap-and-echo-ignored`, `input-non-action-events-publish-nothing-and-mouse-motion-is-accumulated-by-the-engine`; EP `input-delivery-is-deferred`, `input-order-through-queue-and-stream`, `input-500-in-one-frame-no-loss`, `input-set-input-as-handled`, `input-mouse-motion-accumulated-by-default`.
 
-**Trap:** an injected or real event reaches `_input` in the NEXT frame. Mouse motion is accumulated (5 events arrive as ONE, `relative` summed) unless `Input.use_accumulated_input = false`. An event marked `set_input_as_handled()` never reaches `_unhandled_input`. An action name missing from the InputMap prints an engine ERROR.
+**Trap:** an injected or real event reaches `_input` (and the `onInputEvent` relay) in the NEXT frame. Mouse motion is accumulated (5 events arrive as ONE, `relative` summed) unless `Input.use_accumulated_input = false`. An event marked `set_input_as_handled()` never reaches `_unhandled_input`. An action name missing from the InputMap prints an engine ERROR.
 
 ## 3. Entity lifecycle: spawn, despawn
 
@@ -389,10 +387,10 @@ const loot = Effect.gen(function* () {
 
 ## 13. Save and load
 
-VERIFIED as a prototype: the service lives in the test project (`tests/effect-save/src/lib/save-file.ts`), not in `starter/src/lib`; copy it to use it.
+VERIFIED as a prototype: the service lives in the test project (`starter/tests/effect-save/src/lib/save-file.ts`), not in `src/lib`; copy it to use it.
 
 ```ts
-// snippet: skip - SaveFile is a prototype inside tests/effect-save/src/lib, not importable from the starter
+// snippet: skip - SaveFile is a prototype inside starter/tests/effect-save/src/lib, not importable from the starter
 const saves = yield* SaveFile;                          // SaveFile.layer({ version: 3, migrate })
 yield* saves.save("slot1", GameState, state);           // atomic: temp file, then rename
 const loaded = yield* saves.load("slot1", GameState);   // SaveNotFound on first run is NORMAL; SaveCorrupt, SaveSchemaMismatch, SaveMigrationFailed
@@ -464,7 +462,7 @@ VERIFIED. **Rule:** a pause menu sets `tree.paused`; game logic runs on the game
 
 VERIFIED. **Rule:** after a live swap, a call through `this.` runs the NEW code and everything made earlier keeps the code it was made from: nothing is interrupted, duplicated or lost, and nothing is refreshed either. A closure, a fiber body, a `Stream.runForEach` callback and a service object built by a Layer in `_ready` are all "made earlier", so keep them thin (one call through `this.`) and rebuild a Layer from new code when its own closures must change. State that must survive a restart goes through `devState`.
 
-| Made before the swap | After the swap (pinned by `tests/hot-reload` n) |
+| Made before the swap | After the swap (pinned by `starter/tests/hot-reload` n) |
 |---|---|
 | a call `this.method()` from any of the below | the NEW body |
 | a fiber from `forkOnNode(nodeScope(this), ...)` | same fiber, same scope, ticks 1, 2, 3, ... without a gap; its body closure is OLD (`closure=c1`), `this.` calls inside it are NEW (`method=m2`) |
@@ -505,7 +503,7 @@ class Shop extends Node {
 }
 ```
 
-**Verified by:** `tests/hot-reload` (n) one node holding fibers, a Layer, a `signalStream`, game-clock sleeps, a `SubscriptionRef` and a `PubSub` consumer across one live swap, with (o) the same edit as a restart (every assertion of (n) must fail there) and (p) doctored logs (each sub-assertion must turn red); `tests/effect-model` command `HotSwap` (R9: the node class is re-evaluated in random sequences, no scope, fiber or connection is lost, old closures keep their generation, live nodes run the new one; control `swap-drops-hook`); `tests/hot-reload` (a) to (m) for the rest; `tests/dev-state`. **Trap:** a service object, a closure, an `Effect.gen` body and a `Stream` callback made in `_ready` keep OLD code after a swap, and a service held in a closure stays the old object even after you rebuild the Layer and assign the new one to a field; state that must survive a restart must be reachable from `save()`/`load()` (a Ref in a closure is lost); a changed state shape restarts and discards. The swap has no hook to re-run `_ready`: to give a node new services, restart (`bun run dev` does it when the shape changes) or call a method that rebuilds them.
+**Verified by:** `starter/tests/hot-reload` (n) one node holding fibers, a Layer, a `signalStream`, game-clock sleeps, a `SubscriptionRef` and a `PubSub` consumer across one live swap, with (o) the same edit as a restart (every assertion of (n) must fail there) and (p) doctored logs (each sub-assertion must turn red); `starter/tests/effect-model` command `HotSwap` (R9: the node class is re-evaluated in random sequences, no scope, fiber or connection is lost, old closures keep their generation, live nodes run the new one; control `swap-drops-hook`); `starter/tests/hot-reload` (a) to (m) for the rest; `starter/tests/dev-state`. **Trap:** a service object, a closure, an `Effect.gen` body and a `Stream` callback made in `_ready` keep OLD code after a swap, and a service held in a closure stays the old object even after you rebuild the Layer and assign the new one to a field; state that must survive a restart must be reachable from `save()`/`load()` (a Ref in a closure is lost); a changed state shape restarts and discards. The swap has no hook to re-run `_ready`: to give a node new services, restart (`bun run dev` does it when the shape changes) or call a method that rebuilds them.
 
 ## 18. Testing
 
@@ -524,7 +522,7 @@ describe("shooting", () => {
 });
 ```
 
-**Verified by:** ET `testclock` (25 identical `TestClock` runs, also in the engine), EC (differential against bun), ES logic tests (49 tests, 15 controls), EM `model.test.ts` (the pure model under `bun test`). **Trap:** `bun test` cannot import `godot`: keep Godot behind a service; copy `tests/effect-godot` for an engine test, and every behaviour needs a negative control.
+**Verified by:** ET `testclock` (25 identical `TestClock` runs, also in the engine), EC (differential against bun), ES logic tests (49 tests, 15 controls), EM `model.test.ts` (the pure model under `bun test`). **Trap:** `bun test` cannot import `godot`: keep Godot behind a service; copy `starter/tests/effect-godot` for an engine test, and every behaviour needs a negative control.
 
 ## 19. What not to do in a hot loop
 

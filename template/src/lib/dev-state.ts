@@ -6,6 +6,12 @@
 // Call it once the thing it saves exists (usually in _ready). If the previous dev process saved a state for
 // "sim" that still fits, load() runs right now, synchronously, and devState returns true. Design and rejected
 // alternatives: docs/design/dev-state.md.
+//
+// A saved entry this process never registered (its module threw while loading, or its scene was not entered) is
+// written back unchanged with the next save, so the next healthy launch still restores it (ticket 444). Each save also
+// records the scene that is running, so `bun run dev` relaunches into it (ticket 445). The listener starts on the first
+// devState() or hotReload() call and leaves a `listening` file for the runner: a game that never got that far (no
+// listener, no answer) keeps the last save instead of losing it.
 
 export type DevStateOptions<T> = {
   /** The state as plain JSON data (numbers, strings, booleans, null, arrays, plain objects). */
@@ -31,6 +37,7 @@ const WRITE = 2;
 // require() rather than `import * as`: the engine's module object has no __esModule, which the import helper reads.
 const engine = require("godot") as {
   OS: { get_environment(name: string): string };
+  Engine: { get_main_loop(): any };
   FileAccess: {
     file_exists(path: string): boolean;
     open(path: string, flags: number): { get_as_text(): string; store_string(text: string): boolean; close(): void } | null;
@@ -110,7 +117,18 @@ function snapshot(token: string): string {
       say(`could not save "${name}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return JSON.stringify({ token, entries });
+  // carry forward what the previous process saved and this one never registered (nor discarded: a discard consumes it)
+  for (const [name, entry] of loadSaved()) if (!(name in entries) && !registered.has(name)) entries[name] = entry;
+  return JSON.stringify({ token, scene: currentScene(), entries });
+}
+
+/** `res://` path of the running scene, or "" (no scene, or one made in code). */
+function currentScene(): string {
+  try {
+    return String(engine.Engine.get_main_loop()?.current_scene?.scene_file_path ?? "");
+  } catch {
+    return "";
+  }
 }
 
 // The runner writes <dir>/request containing a token. Answer by writing <dir>/state.json carrying the same token.
@@ -119,6 +137,13 @@ function poll(): void {
   if (token === "" || token === reg0.lastToken) return;
   reg0.lastToken = token;
   if (!writeText(`${dir}/state.json`, snapshot(token))) say("could not write the state file");
+}
+
+/** Start answering the runner's save requests (once per process). devState() and hotReload() call it; harmless twice. */
+export function devStateListen(): void {
+  if (dir === "" || reg0.timer !== undefined) return;
+  reg0.timer = setInterval(poll, POLL_MS);
+  writeText(`${dir}/listening`, "1");
 }
 
 /**
@@ -134,7 +159,7 @@ export function devState<T>(name: string, options: DevStateOptions<T>): boolean 
     load: options.load,
   };
   registered.set(name, reg);
-  if (reg0.timer === undefined) reg0.timer = setInterval(poll, POLL_MS);
+  devStateListen();
 
   const entry = loadSaved().get(name);
   if (!entry) return false;

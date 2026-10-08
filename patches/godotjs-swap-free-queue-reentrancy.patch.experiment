@@ -1,0 +1,13 @@
+diff --git a/impl/quickjs/jsb_quickjs_isolate.h b/impl/quickjs/jsb_quickjs_isolate.h
+index b989672..10ea08f 100644
+--- a/impl/quickjs/jsb_quickjs_isolate.h
++++ b/impl/quickjs/jsb_quickjs_isolate.h
+@@ -404,7 +404,7 @@ namespace v8
+ 
+         void swap_free_queue()
+         {
+-            jsb_check(!swapping_free_queue_);
++            if (swapping_free_queue_) return; // experiment: re-entered from a finalizer; the outer loop is still draining
+             Vector<JSValue>& queue = using_front_free_queue_ ? front_free_queue_ : back_free_queue_;
+             if (queue.is_empty()) return;
+ 

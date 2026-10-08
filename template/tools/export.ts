@@ -4,6 +4,8 @@
 //   bun run export:macos --no-smoke             # only build + export + the pack check (no app is run)
 //   bun run export:macos --frames 600           # frames the debug-build run lasts (default 300)
 //   bun run export:macos --no-zip               # skip the jam archive step (dist/<Name>-macos.zip)
+//   bun run export:macos --game-args "--autoplay"   # arguments for YOUR game (after `--`) in every app run: drive it past a
+//                                               # menu. The release probe then also reports at the last frame (--frames).
 // After the checks pass, the app is ad-hoc signed and zipped with a player README into dist/, and the checks run again FROM the zip.
 // What each check shows and does NOT show: docs/SHIPPING.md, section "What the export check proves".
 import { spawnSync } from "node:child_process";
@@ -24,7 +26,16 @@ const value = (name: string): string | undefined => {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
 };
-for (const a of argv) if (a.startsWith("--") && !["--expect", "--frames", "--no-smoke", "--no-zip"].includes(a)) die(`unknown option ${a}\nusage: bun run export:macos [--expect "text"] [--frames N] [--no-smoke] [--no-zip]`);
+const OPTIONS_WITH_VALUE = ["--expect", "--frames", "--game-args"];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (OPTIONS_WITH_VALUE.includes(a)) { i++; continue; } // its value may itself start with -- ("--game-args --autoplay")
+  if (a.startsWith("--") && !["--no-smoke", "--no-zip"].includes(a)) die(`unknown option ${a}\nusage: bun run export:macos [--expect "text"] [--frames N] [--game-args "args"] [--no-smoke] [--no-zip]`);
+}
+const gameArgsText = value("--game-args");
+if (flag("--game-args") && gameArgsText === undefined) die('--game-args needs a value, for example --game-args "--autoplay"');
+const gameArgs = (gameArgsText ?? "").split(" ").filter((a) => a.length > 0);
+const userArgs = gameArgs.length ? ["--", ...gameArgs] : []; // after `--` Godot hands them to the game (OS.get_cmdline_user_args)
 const expectText = value("--expect");
 if (flag("--expect") && !expectText) die("--expect needs a text argument");
 const frames = Number(value("--frames") ?? 300);
@@ -58,6 +69,12 @@ const projectName = projectText.match(/^config\/name="((?:[^"\\]|\\.)*)"/m)?.[1]
 if (!projectName) die("project.godot has no config/name");
 const appName = projectName.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Game";
 const outDir = join(ROOT, "out");
+// scenes other than the main one that attach a .ts script: what a smoke run that stops at the main scene never sees
+const mainScenePath = projectText.match(/^run\/main_scene="([^"]*)"/m)?.[1] ?? "";
+const otherScriptScenes = [...new Bun.Glob("**/*.tscn").scanSync({ cwd: ROOT, onlyFiles: true })]
+  .filter((rel) => !/^(\.godot|node_modules|tests|addons|out|dist|gen)\//.test(rel) && `res://${rel}` !== mainScenePath)
+  .filter((rel) => { try { return /path="res:\/\/[^"]+\.ts"/.test(readFileSync(join(ROOT, rel), "utf8")); } catch { return false; } })
+  .sort();
 const appPath = join(outDir, `${appName}.app`);
 
 if (!existsSync(join(ROOT, "export_presets.cfg"))) die("export_presets.cfg is missing. Copy it from the starter (it holds the macOS preset and the exclude filter).");
@@ -179,7 +196,9 @@ function probeRun(checkName: string, sourceApp: string, work: string): boolean {
   copyFileSync(join(import.meta.dir, "smoke/probe.gd"), probe);
   writeFileSync(join(copy, "Contents/MacOS/override.cfg"), `[autoload]\n\nGodotJSSmokeProbe="*${probe}"\n`);
   const reportPath = join(work, "report.json");
-  const r = run(join(copy, "Contents/MacOS", exe), ["--headless", "--quit-after", "600"], { env: { GODOTJS_SMOKE_OUT: reportPath }, timeoutMs: 60_000 });
+  // with --game-args the game is driven past its first screen: the probe reports at frame 15 AND at the last frame (--frames)
+  const probeFrames = gameArgs.length ? Math.max(frames, 15) : 15;
+  const r = run(join(copy, "Contents/MacOS", exe), ["--headless", "--quit-after", String(Math.max(600, probeFrames + 300)), ...userArgs], { env: { GODOTJS_SMOKE_OUT: reportPath, GODOTJS_SMOKE_FRAMES: String(probeFrames) }, timeoutMs: 120_000 });
   const lines = r.output.split("\n").filter((l) => /^(ERROR|SCRIPT ERROR|WARNING)|\[jsb\]\[(Error|Warning)\]/.test(l));
   let report: Record<string, unknown> | undefined;
   try {
@@ -192,10 +211,11 @@ function probeRun(checkName: string, sourceApp: string, work: string): boolean {
   const hasTs = results.find((x) => x.name === "bundle in pack")?.ok === true;
   const detail = report
     ? `exit ${r.status}, ${report.frames} frames, main scene ${report.main_scene_loaded ? `loaded (${report.main_scene})` : "NOT loaded"}, ${nJs} live .ts script node(s), ${report.node_count} nodes, release build: ${report.debug_build === false}`
-    : `exit ${r.status}${r.timedOut ? " (timed out after 60 s)" : ""}, the probe never reported`;
+    : `exit ${r.status}${r.timedOut ? " (timed out after 120 s)" : ""}, the probe never reported`;
   const ok = r.status === 0 && !!report && report.main_scene_loaded === true && bad.length === 0 && report.debug_build === false && lines.length === 0;
   record(checkName, ok, detail + (bad.length ? `; scripts that cannot instantiate: ${bad.join(", ")}` : "") + (lines.length ? `; engine printed: ${lines.slice(0, 3).join(" | ")}` : ""));
-  if (ok && nJs === 0 && hasTs) console.log("  note: the pack has .ts scripts but none was attached to a node 15 frames after start (fine if your game attaches them later)");
+  if (ok && nJs === 0 && hasTs) console.log(`  note: the pack has .ts scripts but none was attached to a node ${report?.frames} frames after start (fine if your game attaches them later)`);
+  if (ok && !gameArgs.length && otherScriptScenes.length) console.log(`  note: only the main scene ran; ${otherScriptScenes.length} other scene(s) with .ts scripts (${otherScriptScenes.slice(0, 3).join(", ")}${otherScriptScenes.length > 3 ? ", ..." : ""}) were never reached. A game behind a menu: --game-args "--autoplay" (your own flag) drives it further`);
   if (!ok) console.log(r.output.split("\n").slice(-15).join("\n"));
   return ok;
 }
@@ -221,7 +241,7 @@ if (smoke) {
       console.error(e2.output.split("\n").filter((l) => !l.includes("savepack")).join("\n"));
       die(`the debug export failed (exit ${e2.status})`);
     }
-    const r = run(join(dbgApp, "Contents/MacOS", exeName), ["--headless", "--quit-after", String(frames)], { timeoutMs: 120_000 });
+    const r = run(join(dbgApp, "Contents/MacOS", exeName), ["--headless", "--quit-after", String(frames), ...userArgs], { timeoutMs: 120_000 });
     const log = r.output;
     const errs = log.split("\n").filter((l) => /^(ERROR|SCRIPT ERROR)|\[jsb\]\[Error\]|Failed loading|Can't load/.test(l));
     const started = /Godot Engine v/.test(log);

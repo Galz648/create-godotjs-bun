@@ -24,7 +24,7 @@ function isDefaultExported(node: ts.ClassLikeDeclaration): boolean {
 
 // True when the class (or an ancestor in the project) extends a class declared in a .d.ts, which is how
 // the engine's classes arrive.
-function extendsGodotClass(node: ts.ClassLikeDeclaration, checker: ts.TypeChecker): boolean {
+export function extendsGodotClass(node: ts.ClassLikeDeclaration, checker: ts.TypeChecker): boolean {
   const seen = new Set<ts.Node>();
   const visit = (cls: ts.ClassLikeDeclaration): boolean => {
     if (seen.has(cls)) return false;

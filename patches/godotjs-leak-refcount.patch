@@ -1,0 +1,13 @@
+diff --git a/bridge/jsb_environment.cpp b/bridge/jsb_environment.cpp
+index e121efa..6b82e2a 100644
+--- a/bridge/jsb_environment.cpp
++++ b/bridge/jsb_environment.cpp
+@@ -856,7 +856,7 @@ namespace jsb
+             // for a ref-counted object which instantiated by GodotJS, the external_rc will be 0.
+             // then, the object will behave like a managed JS object.
+             // otherwise, it will be strongly referenced in JS until all external references are released (unreference).
+-            external_rc = ref_counted->get_reference_count() - 1;
++            external_rc = ref_counted->get_reference_count() > 1 ? 1 : 0;
+         }
+         const NativeObjectID object_id = bind_pointer(p_class_id, NativeClassType::GodotObject, (void*) p_pointer, p_object, external_rc, p_js_owned_non_ref);
+ 

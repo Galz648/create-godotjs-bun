@@ -24,6 +24,9 @@ const NEEDS_ABORT =
 // value-checks.ts (tickets 262, 265, 267, 268) reads types, not text patterns: any file that imports from the engine can hold one of its constructs.
 const NEEDS_VALUE = /from\s*["']godot["']/;
 
+// leak-checks.ts (ticket 441): the barrel import, the leak-family calls and the input virtuals all have a fixed spelling.
+const NEEDS_LEAK = /["']effect["']|\b(?:create_timer|create_tween|get_slide_collision|get_last_slide_collision|_input|_unhandled_input)\b/;
+
 const CALLABLE_HELPER =`import { Callable } from "godot";
 
 const owners = new WeakMap<object, WeakMap<Function, Function>>();
@@ -103,7 +106,8 @@ export function createSession(root: string, rewrites?: Partial<PluginRewrites>):
         if (file.includes(`${join("node_modules", "")}`) || file.startsWith(PLUGIN_DIR)) return;
         const text = readFileSync(file, "utf8");
         const valueChecks = switches.badConversions || switches.lostWrites || switches.valueStrings || switches.packedIteration;
-        if (!NEEDS.test(text) && !(switches.abortGuards && NEEDS_ABORT.test(text)) && !(valueChecks && NEEDS_VALUE.test(text))) return;
+        const leakChecks = switches.effectBarrel || switches.leakCalls || switches.inputVirtuals;
+        if (!NEEDS.test(text) && !(switches.abortGuards && NEEDS_ABORT.test(text)) && !(valueChecks && NEEDS_VALUE.test(text)) && !(leakChecks && NEEDS_LEAK.test(text))) return;
         const sourceFile = program.getSourceFile(file);
         if (!sourceFile) return;
         const result = transformSourceFile(sourceFile, checker, { gdModule, scenes: sceneIndex, rewrites: switches });

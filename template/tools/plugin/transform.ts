@@ -1,4 +1,5 @@
 // Type-aware text edits. The checker reads declared types; the bytes Bun compiles stay TypeScript.
+import { allowedIn, leakProblems } from "./leak-checks.ts";
 import { basename } from "node:path";
 import { engineKind, importedEngineClass } from "./engine-classes.ts";
 import ts from "typescript";
@@ -90,7 +91,7 @@ export function transformSourceFile(
 
   const considerCall = (node: ts.CallExpression) => {
     if (isSetScript(node)) {
-      if (!isGdScriptArg(node.arguments[0])) {
+      if (!isGdScriptArg(node.arguments[0], checker)) {
         warnings.push(
           `${loc(node)} set_script() does not run a JS class constructor on the stock engine, so accessor fields stay uninitialised. Use ResourceLoader.load(path).call("new") for a new instance. Flagged, not rewritten.`,
         );
@@ -353,11 +354,20 @@ export function transformSourceFile(
     if (rw.packedIteration) {
       for (const p of packedProblems(node, checker)) warnings.push(`${loc(p.node)} ${p.message} (engine ticket ${p.ticket}; switch packedIteration)`);
     }
+    for (const p of leakProblems(node, checker, leakSwitches)) warnings.push(`${loc(p.node)} ${p.message} (switch ${p.switch})`);
     if (ts.isAwaitExpression(node) && isSignalExpression(node.expression, checker)) {
       warnings.push(
         `${loc(node)} \`await ${node.expression.getText()}\` does not wait: a Signal is not a Promise in JS, so the await resolves at once. Use \`await ${node.expression.getText()}.as_promise()\`.`,
       );
     }
+  };
+
+  // leak-checks.ts: each on unless its switch is off or this file opts out (`// godotjs-plugin-allow: leakCalls`)
+  const allowed = allowedIn(sf);
+  const leakSwitches = {
+    effectBarrel: rw.effectBarrel && !allowed.has("effectBarrel"),
+    leakCalls: rw.leakCalls && !allowed.has("leakCalls"),
+    inputVirtuals: rw.inputVirtuals && !allowed.has("inputVirtuals"),
   };
 
   const walk = (node: ts.Node) => {
@@ -519,10 +529,24 @@ function isSetScript(node: ts.CallExpression): boolean {
   return ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "set_script";
 }
 
-function isGdScriptArg(arg: ts.Expression | undefined): boolean {
+/**
+ * True when the set_script argument is not (or cannot be shown to be) a JS script class: a `.gd` path, `new GDScript()`, a value
+ * typed GDScript (or a subclass), or an `any` / `unknown` the plugin cannot judge ("silent rather than wrong"; ticket 442: the
+ * runtime GDScript relay in src/lib/leak-free.ts). A Resource, Script or JS script type still warns.
+ */
+function isGdScriptArg(arg: ts.Expression | undefined, checker: ts.TypeChecker): boolean {
   if (!arg) return false;
   const text = arg.getText();
-  return text.includes(".gd\"") || text.includes(".gd'");
+  if (text.includes(".gd\"") || text.includes(".gd'")) return true;
+  if (/\.(ts|tsx|js|mjs)["'`]/.test(text)) return false; // a JS script path, whatever its type
+  if (ts.isNewExpression(arg) && ts.isIdentifier(arg.expression) && arg.expression.text === "GDScript") return true;
+  const type = checker.getTypeAtLocation(arg);
+  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return true;
+  for (let t: ts.Type | undefined = type, depth = 0; t && depth < 10; depth++) {
+    if (t.getSymbol()?.getName() === "GDScript") return true;
+    t = t.isClassOrInterface() ? checker.getBaseTypes(t)[0] : undefined;
+  }
+  return false;
 }
 
 function isTwoArgCallableCreate(node: ts.CallExpression, callableLocal: string | null): boolean {
