@@ -2,6 +2,11 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com). Versions follow [Semantic Versioning](https://semver.org); before 1.0 a minor bump (0.x.0) adds features or may change behaviour, a patch bump (0.x.y) is fixes only.
 
+## 0.5.4
+
+### Fixed
+- The sample engine test shipped in every new game (`tests/engine/effect.test.ts`) asserted that a 30 ms `Effect.sleep` takes at least 25 ms. The engine's timer wheel can fire a timer early by about one 10 ms step, so `bun run test:engine` failed now and then (found by the first CI run after 0.5.3). It now sleeps 100 ms and asserts at least 50 ms.
+
 ## 0.5.3
 
 ### Fixed
