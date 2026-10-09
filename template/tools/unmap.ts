@@ -23,14 +23,18 @@ function consumer(file: string) {
 
 /** One line of engine output with its `.js:line:col` positions mapped to the source; `base` is what relative paths resolve against. */
 export function translate(line: string, base: string = process.cwd()): string {
-  return line.replace(/((?:\/|res:\/\/)?[^\s()]+\.js):(\d+):(\d+)/g, (whole, file: string, l: string, c: string) => {
+  const one = (whole: string, file: string, l: string, c: string): string => {
     const path = file.startsWith("res://") ? resolve(base, file.slice("res://".length)) : resolve(base, file);
     const m = consumer(path);
     if (!m) return whole;
     const pos = m.originalPositionFor({ line: Number(l), column: Number(c) - 1 });
     if (!pos.source) return whole;
     return `${relative(base, resolve(dirname(path), pos.source))}:${pos.line}:${(pos.column ?? 0) + 1}`;
-  });
+  };
+  // A stack frame `at fn (/path with spaces/x.js:1:2)`: the parentheses delimit the path, so it may contain spaces.
+  const framed = line.replace(/\(((?:\/|res:\/\/)?[^()]+?\.js):(\d+):(\d+)\)/g, (whole, file: string, l: string, c: string) => `(${one(whole.slice(1, -1), file, l, c)})`);
+  // Any other position (`res://src/x.js:1:2 ...`): no spaces in the path.
+  return framed.replace(/((?:\/|res:\/\/)?[^\s()]+\.js):(\d+):(\d+)/g, (whole, file: string, l: string, c: string) => one(whole, file, l, c));
 }
 
 if (import.meta.main) {

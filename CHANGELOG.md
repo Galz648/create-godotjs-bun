@@ -2,6 +2,13 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com). Versions follow [Semantic Versioning](https://semver.org); before 1.0 a minor bump (0.x.0) adds features or may change behaviour, a patch bump (0.x.y) is fixes only.
 
+## 0.5.3
+
+### Fixed
+- **A game in a folder whose path contains a space** (`My Game/`) now gets mapped error stacks: `tools/unmap.ts` (and `bun run dev`, which shares it) stopped at the first space in the path.
+- **`bun run start`, `headless` and `editor` refuse to run in a folder without a `project.godot`** (with a clear message). Godot used to open its project manager and never exit, even with `--headless`.
+- `input-replay` no longer raises a script error when an event arrives after the recording is finished.
+
 ## 0.5.2
 
 Found by a rehearsal: a developer who had never seen the project scaffolded 0.5.1 and built a complete small game from the shipped docs only (73 minutes to first playable, 80 to an exported macOS zip). These are the frictions it hit.

@@ -83,6 +83,8 @@ func _ready() -> void:
 
 
 func _on_window_input(e: InputEvent) -> void:
+	if file == null:
+		return  # an event delivered after finish() (ticket 420)
 	file.store_line("%d\t%s" % [frame, var_to_str(e).strip_edges().replace("\n", " ")])
 	events += 1
 

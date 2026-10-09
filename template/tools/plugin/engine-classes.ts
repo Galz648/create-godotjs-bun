@@ -1,5 +1,5 @@
 // What the plugin knows about engine classes it has no declaration for. The program the checks run on resolves
-// "godot" to a small stand-in file (18 classes); the full class list is the generated typings (`bun run types`),
+// "godot" to a small stand-in file (20 classes); the full class list is the generated typings (`bun run types`),
 // which only the scene check reads. This reads the same files for the class hierarchy, once per build.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
